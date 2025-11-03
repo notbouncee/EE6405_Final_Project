@@ -1,0 +1,1 @@
+download AMItheAsshole.sqlite dataset from https://www.kaggle.com/datasets/jianloongliew/reddit/data
