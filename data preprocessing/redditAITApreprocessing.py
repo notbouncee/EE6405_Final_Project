@@ -7,6 +7,9 @@ from sklearn.model_selection import train_test_split
 # Extract dataset
 conn = sqlite3.connect("/Users/hehvince/Desktop/EE6405/EE6405_Final_Project/data/raw/AmItheAsshole.sqlite")
 
+# Change according to your paths
+preprocessed_file_path = "/Users/hehvince/Desktop/EE6405/EE6405_Final_Project/data/preprocessed/"
+
 # Show tables
 query = "SELECT name FROM sqlite_master WHERE type='table';"
 tables = pd.read_sql(query, conn)
@@ -50,29 +53,28 @@ merged = top_comments.merge(submissions, on="submission_id")
 merged["text"] = merged["title"].fillna('') + " " + merged["selftext"].fillna('')
 
 # Filter necessary columns
-data_df = merged[["text", "label"]]
+data_df = merged[["text", "label"]].rename(columns={"label": "stance"})
 
 data_df.head()
 
 # Delete rows with no label
-data_df = data_df[data_df["label"].notna()].copy()
+data_df = data_df[data_df["stance"].notna()].copy()
 
 # Relabel 'label' column
 mapping = {'YTA': 'oppose', 'ESH': 'oppose', 'INFO': 'neutral', 'NAH': 'concur', 'NTA': 'concur'}
-if not set(data_df['label'].astype(str).unique()) <= set(mapping.keys()):
+if not set(data_df['stance'].astype(str).unique()) <= set(mapping.keys()):
     raise ValueError("label column has values outside {'YTA','ESH','INFO','NAH','NTA'}")
-data_df['label'] = data_df['label'].astype(str).replace(mapping)
+data_df['stance'] = data_df['stance'].astype(str).replace(mapping)
 
 # Split train and test sets (stratified)
 train_df, test_df = train_test_split(
     data_df,
     test_size=0.2,
     random_state=42,
-    stratify=data_df["label"]
+    stratify=data_df["stance"]
     )
 
-# Change according to your paths
-preprocessed_file_path = "/Users/hehvince/Desktop/EE6405/EE6405_Final_Project/data/preprocessed/"
+
 
 # Save to CSV
 train_df.to_csv(f"{preprocessed_file_path}redditAITA_train.csv", index=False)
