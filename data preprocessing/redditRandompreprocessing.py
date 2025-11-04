@@ -1,16 +1,17 @@
-import pandas as pd 
 import numpy as np
+import pandas as pd 
+from pathlib import Path
 from sklearn.model_selection import train_test_split
 
 
-# Change according to your paths
-file_path = "/Users/hehvince/Desktop/EE6405/EE6405_Final_Project/data/raw/reddit_posts_and_comments_labeled.csv"
+ROOT = Path(__file__).resolve().parent.parent
+DB_PATH = ROOT / "data" / "raw" / "reddit_posts_and_comments_labeled.csv"
+PREPROCESSED_DIR = ROOT / "data" / "preprocessed"
+PREPROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-# Change according to your paths
-preprocessed_file_path = "/Users/hehvince/Desktop/EE6405/EE6405_Final_Project/data/preprocessed/"
 
 # 1) Read the CSV file -> DataFrame
-data_df = pd.read_csv(file_path)
+data_df = pd.read_csv(DB_PATH)
 
 # 2) Inspect
 print(data_df.shape)
@@ -40,6 +41,6 @@ train_df, test_df = train_test_split(
 
 
 # Save to CSV
-train_df.to_csv(f"{preprocessed_file_path}reddit_posts_and_comments_train.csv", index=False)
-test_df.to_csv(f"{preprocessed_file_path}reddit_posts_and_comments_test.csv", index=False)
-data_df.to_csv(f"{preprocessed_file_path}reddit_posts_and_comments.csv", index=False)
+train_df.to_csv(PREPROCESSED_DIR / "reddit_posts_and_comments_train.csv", index=False)
+test_df.to_csv(PREPROCESSED_DIR / "reddit_posts_and_comments_test.csv", index=False)
+data_df.to_csv(PREPROCESSED_DIR / "reddit_posts_and_comments.csv", index=False)

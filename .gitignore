@@ -43,6 +43,9 @@ logs/
 # If you want to keep raw dataset files tracked, remove or comment out the next two lines
 # data/raw/
 /data/raw/AmItheAsshole.sqlite
+/data/preprocessed/redditAITA.csv
+/data/preprocessed/redditAITA_test.csv
+/data/preprocessed/redditAITA_train.csv
 # *.db
 
 # Local overrides
