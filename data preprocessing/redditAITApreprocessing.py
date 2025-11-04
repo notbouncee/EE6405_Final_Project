@@ -2,18 +2,22 @@ import numpy as np
 import pandas as pd
 import sqlite3
 import re
+from pathlib import Path
 from sklearn.model_selection import train_test_split
 
-# Extract dataset
-conn = sqlite3.connect("/Users/hehvince/Desktop/EE6405/EE6405_Final_Project/data/raw/AmItheAsshole.sqlite")
+# Project-root relative paths (place the DB at repo-root/data/raw/AmItheAsshole.sqlite)
+ROOT = Path(__file__).resolve().parent.parent
+DB_PATH = ROOT / "data" / "raw" / "AmItheAsshole.sqlite"
+PREPROCESSED_DIR = ROOT / "data" / "preprocessed"
+PREPROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
-# Change according to your paths
-preprocessed_file_path = "/Users/hehvince/Desktop/EE6405/EE6405_Final_Project/data/preprocessed/"
+# open sqlite connection
+conn = sqlite3.connect(str(DB_PATH))
 
 # Show tables
 query = "SELECT name FROM sqlite_master WHERE type='table';"
 tables = pd.read_sql(query, conn)
-print("Tablas:")
+print("Tables:")
 print(tables)
 
 # Load some comments
@@ -31,34 +35,36 @@ FROM comment
 WHERE message LIKE '%YTA%' OR message LIKE '%NTA%' OR message LIKE '%ESH%' OR message LIKE '%INFO%' OR message LIKE '%NAH%'
 """, conn)
 
-# Choose the highest-scoring comment for each post (corrected with .copy())
-judging_comments = judging_comments.sort_values("score", ascending=False)
-top_comments = judging_comments.drop_duplicates(subset="submission_id", keep="first").copy()
-top_comments.head()
-
 #  Extract the comment tag
 def extract_label(text):
     match = re.search(r"\b(YTA|NTA|ESH|INFO|NAH)\b", text)
     return match.group(1) if match else None
 
-top_comments["label"] = top_comments["message"].apply(extract_label)
+judging_comments["label"] = judging_comments["message"].apply(extract_label)
 
 # Upload the original posts, including submission_id
 submissions = pd.read_sql("SELECT submission_id, title, selftext FROM submission", conn)
 
-# Join using submission_id (both tables have the same one)
-merged = top_comments.merge(submissions, on="submission_id")
+# keep all submissions, attach any matching comment rows (may produce multiple rows per submission)
+merged = pd.merge(submissions,
+                  judging_comments,
+                  on="submission_id",
+                  how="left")
 
-# Combine title + post body
-merged["text"] = merged["title"].fillna('') + " " + merged["selftext"].fillna('')
 
-# Filter necessary columns
-data_df = merged[["text", "label"]].rename(columns={"label": "stance"})
+print(merged.shape)
+merged.head()
+
+# Drop unnecessary columns
+merged.drop(columns=["submission_id", "title", "score"], inplace=True)
+
+# Rename columns
+data_df = merged.rename(columns={"message": "comment", "label": "stance", "selftext": "post"})
+
+# Drop rows where 'stance' is null or only whitespace
+data_df = data_df[data_df['stance'].notna() & data_df['stance'].astype(str).str.strip().ne('')].copy()
 
 data_df.head()
-
-# Delete rows with no label
-data_df = data_df[data_df["stance"].notna()].copy()
 
 # Relabel 'label' column
 mapping = {'YTA': 'oppose', 'ESH': 'oppose', 'INFO': 'neutral', 'NAH': 'concur', 'NTA': 'concur'}
@@ -75,9 +81,8 @@ train_df, test_df = train_test_split(
     )
 
 
-
-# Save to CSV
-train_df.to_csv(f"{preprocessed_file_path}redditAITA_train.csv", index=False)
-test_df.to_csv(f"{preprocessed_file_path}redditAITA_test.csv", index=False)
-data_df.to_csv(f"{preprocessed_file_path}redditAITA.csv", index=False)
+# Save to CSV (write into project-relative data/preprocessed directory)
+train_df.to_csv(PREPROCESSED_DIR / "redditAITA_train.csv", index=False)
+test_df.to_csv(PREPROCESSED_DIR / "redditAITA_test.csv", index=False)
+data_df.to_csv(PREPROCESSED_DIR / "redditAITA.csv", index=False)
 
