@@ -75,6 +75,7 @@ def load_dataset(dataset_name, split="train", data_dir="./data/preprocessed"):
         raise ValueError(f"Unknown dataset: {dataset_name}")
     
     # Convert labels to indices
+    # First, filter out any invalid labels (like "Queries")
     valid_labels = list(LABEL_MAP.keys())
     initial_count = len(df)
     df = df[df['label'].isin(valid_labels)]
@@ -134,7 +135,7 @@ def prepare_datasets(dataset_name, tokenizer, max_length=128):
     print(f"  Tokenizing...")
     train_dataset = train_dataset.map(tokenize_function, batched=True)
     test_dataset = test_dataset.map(tokenize_function, batched=True)
-    print(f"  Tokenization complete")
+    print(f"  ✓ Tokenization complete")
     
     return train_dataset, test_dataset, train_df, test_df
 
@@ -212,7 +213,7 @@ def compute_metrics(eval_pred):
 
 
 def train_final_model(model, tokenizer, train_dataset, test_dataset, output_dir, 
-                      learning_rate, batch_size, num_epochs):
+                      learning_rate, batch_size, num_epochs, weight_decay=0.01):
     """Train the final model with best hyperparameters from Optuna"""
     
     training_args = TrainingArguments(
@@ -223,7 +224,7 @@ def train_final_model(model, tokenizer, train_dataset, test_dataset, output_dir,
         per_device_train_batch_size=batch_size,
         per_device_eval_batch_size=batch_size,
         num_train_epochs=num_epochs,
-        weight_decay=0.01,
+        weight_decay=weight_decay,
         load_best_model_at_end=True,
         metric_for_best_model="f1_macro",
         logging_dir=f'{output_dir}/logs',
@@ -245,7 +246,7 @@ def train_final_model(model, tokenizer, train_dataset, test_dataset, output_dir,
     print(f"\nTraining final model with best hyperparameters...")
     print(f"Training samples: {len(train_dataset)}")
     print(f"Test samples: {len(test_dataset)}")
-    print(f"Learning rate: {learning_rate}, Batch size: {batch_size}, Epochs: {num_epochs}")
+    print(f"Learning rate: {learning_rate}, Batch size: {batch_size}, Epochs: {num_epochs}, Weight decay: {weight_decay}")
     
     trainer.train()
     
@@ -427,7 +428,7 @@ def plot_per_class_metrics(final_metrics, model_name, dataset_name, output_dir):
     plt.savefig(f"{output_dir}/results/per_class_metrics.png", dpi=300, bbox_inches='tight')
     plt.close()
     
-    print(f"Saved: per_class_metrics.png")
+    print(f"✓ Saved: per_class_metrics.png")
 
 
 def plot_class_distribution(train_df, test_df, dataset_name, output_dir):
@@ -498,7 +499,7 @@ def objective(trial, model_path, tokenizer, train_dataset, test_dataset, output_
     learning_rate = trial.suggest_float('learning_rate', 1e-5, 5e-5, log=True)
     batch_size = trial.suggest_categorical('batch_size', [8, 16, 32])
     num_epochs = trial.suggest_int('num_epochs', 3, 5)
-    weight_decay = trial.suggest_float('weight_decay', 0.0, 0.1)
+    weight_decay = trial.suggest_float('weight_decay', 0.001, 0.05) 
     
     # Load model
     model = AutoModelForSequenceClassification.from_pretrained(
@@ -577,15 +578,23 @@ def hyperparameter_tuning(model_path, tokenizer, train_dataset, test_dataset,
     # Plot optimization history
     plot_optuna_results(study, output_dir)
     
+    # Cleanup trial directories
+    import shutil
+    for trial_dir in Path(output_dir).glob("optuna_trial_*"):
+        if trial_dir.is_dir():
+            shutil.rmtree(trial_dir, ignore_errors=True)
+    
+    print(f"✓ Saved: hyperparameter_tuning.png")
+    
     return study.best_params
 
 
 def plot_optuna_results(study, output_dir):
     """Plot Optuna optimization results"""
-    
+    results_dir = Path(output_dir) / "results"
     trials_df = study.trials_dataframe()
     
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
     
     # Optimization history
     axes[0, 0].plot(trials_df['number'], trials_df['value'], marker='o')
@@ -604,6 +613,13 @@ def plot_optuna_results(study, output_dir):
     axes[0, 1].set_xscale('log')
     axes[0, 1].grid(True, alpha=0.3)
     
+    # Weight decay impact
+    axes[0, 2].scatter(trials_df['params_weight_decay'], trials_df['value'], alpha=0.6, c=trials_df['value'], cmap='viridis')
+    axes[0, 2].set_xlabel('Weight Decay')
+    axes[0, 2].set_ylabel('F1 Score (Macro)')
+    axes[0, 2].set_title('Weight Decay Impact')
+    axes[0, 2].grid(True, alpha=0.3)
+    
     # Batch size impact
     batch_sizes = trials_df['params_batch_size'].unique()
     for bs in sorted(batch_sizes):
@@ -621,12 +637,31 @@ def plot_optuna_results(study, output_dir):
     axes[1, 1].set_title('Epochs Impact')
     axes[1, 1].grid(True, alpha=0.3)
     
+    # Hyperparameter correlation heatmap
+    param_cols = ['params_learning_rate', 'params_batch_size', 'params_num_epochs', 'params_weight_decay']
+    corr_data = trials_df[param_cols + ['value']].copy()
+    corr_data.columns = ['LR', 'Batch', 'Epochs', 'Weight Decay', 'F1']
+    correlation = corr_data.corr()
+    
+    im = axes[1, 2].imshow(correlation, cmap='coolwarm', aspect='auto', vmin=-1, vmax=1)
+    axes[1, 2].set_xticks(range(len(correlation.columns)))
+    axes[1, 2].set_yticks(range(len(correlation.columns)))
+    axes[1, 2].set_xticklabels(correlation.columns, rotation=45, ha='right')
+    axes[1, 2].set_yticklabels(correlation.columns)
+    axes[1, 2].set_title('Parameter Correlation')
+    
+    # Add correlation values as text
+    for i in range(len(correlation.columns)):
+        for j in range(len(correlation.columns)):
+            text = axes[1, 2].text(j, i, f'{correlation.iloc[i, j]:.2f}',
+                                   ha="center", va="center", color="black", fontsize=9)
+    
+    plt.colorbar(im, ax=axes[1, 2])
+    
     plt.suptitle('Hyperparameter Tuning Results', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/results/hyperparameter_tuning.png", dpi=300, bbox_inches='tight')
+    plt.savefig(results_dir / "hyperparameter_tuning.png", dpi=300, bbox_inches='tight')
     plt.close()
-    
-    print(f"Saved: hyperparameter_tuning.png")
 
 
 # ==================== MAIN ====================
@@ -679,7 +714,7 @@ def main():
     # Plot class distribution
     plot_class_distribution(train_df, test_df, args.dataset, args.output_dir)
     
-    # Run hyperparameter tuning
+    # Run hyperparameter tuning 
     best_params = hyperparameter_tuning(
         args.model_path, tokenizer, train_dataset, test_dataset,
         args.output_dir, args.n_trials
@@ -696,13 +731,13 @@ def main():
         ignore_mismatched_sizes=True  # This ignores the classifier layer mismatch
     )
     
-    print(f"Model loaded successfully with 3-class classification head")
+    print(f"✓ Model loaded successfully with 3-class classification head")
     
     # Train final model with best hyperparameters
     trainer, metrics_callback = train_final_model(
         model, tokenizer, train_dataset, test_dataset, args.output_dir,
         best_params['learning_rate'], best_params['batch_size'], 
-        best_params['num_epochs']
+        best_params['num_epochs'], best_params['weight_decay']
     )
     
     # Evaluate and save results
@@ -728,8 +763,8 @@ def main():
         'learning_rate': best_params['learning_rate'],
         'batch_size': best_params['batch_size'],
         'num_epochs': best_params['num_epochs'],
+        'weight_decay': best_params['weight_decay'],
         'max_length': args.max_length,
-        'weight_decay': 0.01,
     }
     with open(f"{args.output_dir}/results/hyperparameters_used.json", 'w') as f:
         json.dump(hyperparams, f, indent=2)
