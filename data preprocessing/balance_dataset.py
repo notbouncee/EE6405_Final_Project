@@ -1,21 +1,21 @@
 """
 Balance redditAITA Dataset for Stance Detection
 
-This script balances the imbalanced redditAITA train dataset by:
-- Sampling 46,000 concur samples (from 2.1M)
-- Sampling 46,000 oppose samples (from 941k)
-- Keeping all 45,276 neutral samples
-
-It also reduces the test set size by a factor of 10 while maintaining the original distribution.
+This script balances the imbalanced redditAITA dataset by:
+- Sampling 10,000 concur samples (from 2.1M)
+- Sampling 10,000 oppose samples (from 941k)
+- Sampling 10,000 neutral samples (from 45k)
+- Reducing the test set size by a factor of 20 while maintaining the original distribution.
 """
 
 import pandas as pd
 import argparse
 from pathlib import Path
 
-def balance_train_set(data_dir="./data/preprocessed",
-                       concur_samples=46000,
-                       oppose_samples=46000,
+def balance_redditaita(data_dir="./data/preprocessed",
+                       concur_samples=10000,
+                       oppose_samples=10000,
+                       neutral_samples=10000,
                        random_seed=42):
     """
     Balance the redditAITA training dataset and overwrite original
@@ -53,14 +53,14 @@ def balance_train_set(data_dir="./data/preprocessed",
     
     print(f"\nBalancing with seed={random_seed}...")
     
-    # Sample concur and oppose, keep all neutral
+    # Sample all three stances
     df_concur_sampled = df_concur.sample(n=concur_samples, random_state=random_seed)
     df_oppose_sampled = df_oppose.sample(n=oppose_samples, random_state=random_seed)
-    df_neutral_sampled = df_neutral 
+    df_neutral_sampled = df_neutral.sample(n=neutral_samples, random_state=random_seed)
     
     print(f"  Sampled {len(df_concur_sampled):,} concur")
     print(f"  Sampled {len(df_oppose_sampled):,} oppose")
-    print(f"  Kept all {len(df_neutral_sampled):,} neutral")
+    print(f"  Sampled {len(df_neutral_sampled):,} neutral")
     
     # Combine and shuffle
     df_balanced = pd.concat([df_concur_sampled, df_oppose_sampled, df_neutral_sampled])
@@ -77,16 +77,16 @@ def balance_train_set(data_dir="./data/preprocessed",
     # Overwrite original training file
     print(f"\nOverwriting original file: {train_file}")
     df_balanced.to_csv(train_file, index=False)
+    print(f"✓ Balanced training data saved (original backed up)")
 
+    
     print("\n" + "="*60)
     print("BALANCING COMPLETE!")
     print("="*60)
-    print(f"✓ Training file updated: {train_file}")
-    print("="*60 + "\n")
 
 
 def reduce_test_size(data_dir="./data/preprocessed",
-                     reduction_factor=10,
+                     reduction_factor=20,
                      random_seed=42):
     """
     Reduce test set size while maintaining original distribution
@@ -143,12 +143,11 @@ def reduce_test_size(data_dir="./data/preprocessed",
     # Overwrite original test file
     print(f"\nOverwriting original file: {test_file}")
     df_reduced.to_csv(test_file, index=False)
+    print(f"✓ Reduced test data saved")
     
     print("\n" + "="*60)
     print("TEST SET REDUCTION COMPLETE!")
     print("="*60)
-    print(f"Test file updated: {test_file}")
-    print("="*60 + "\n")
 
 
 def main():
@@ -164,20 +163,26 @@ def main():
     parser.add_argument(
         '--concur_samples', 
         type=int, 
-        default=46000,
-        help='Number of concur samples to keep (default: 46000)'
+        default=10000,
+        help='Number of concur samples to keep (default: 10000)'
     )
     parser.add_argument(
         '--oppose_samples', 
         type=int, 
-        default=46000,
-        help='Number of oppose samples to keep (default: 46000)'
+        default=10000,
+        help='Number of oppose samples to keep (default: 10000)'
+    )
+    parser.add_argument(
+        '--neutral_samples', 
+        type=int, 
+        default=10000,
+        help='Number of neutral samples to keep (default: 10000)'
     )
     parser.add_argument(
         '--reduction_factor',
         type=int,
-        default=10,
-        help='Factor to reduce test set size by (default: 10)'
+        default=20,
+        help='Factor to reduce test set size by (default: 20)'
     )
     parser.add_argument(
         '--seed', 
@@ -200,10 +205,11 @@ def main():
     
     # Balance training set
     if not args.skip_train:
-        balance_train_set(
+        balance_redditaita(
             data_dir=args.data_dir,
             concur_samples=args.concur_samples,
             oppose_samples=args.oppose_samples,
+            neutral_samples=args.neutral_samples,
             random_seed=args.seed
         )
     

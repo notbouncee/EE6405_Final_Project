@@ -18,14 +18,14 @@ python "data preprocessing/balance_dataset.py"
 ```
 
 **Training set** - Balanced:
-- Concur: 46,000 samples
-- Oppose: 46,000 samples
-- Neutral: 45,276 samples (all available)
+- Concur: 10,000 samples
+- Oppose: 10,000 samples
+- Neutral: 10,000 samples
 
-**Test set** - Reduced 10x (maintains original distribution):
-- Concur: ~52,910 (68.2%)
-- Oppose: ~23,549 (30.3%)
-- Neutral: ~1,132 (1.5%)
+**Test set** - Reduced 20x (maintains original distribution):
+- Concur: ~26,455 (68.2%)
+- Oppose: ~11,774 (30.3%)
+- Neutral: ~566 (1.5%)
 
 ## Result
 
