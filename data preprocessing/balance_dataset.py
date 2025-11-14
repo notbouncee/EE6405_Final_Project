@@ -2,10 +2,10 @@
 Balance redditAITA Dataset for Stance Detection
 
 This script balances the imbalanced redditAITA dataset by:
-- Sampling 10,000 concur samples (from 2.1M)
-- Sampling 10,000 oppose samples (from 941k)
-- Sampling 10,000 neutral samples (from 45k)
-- Reducing the test set size by a factor of 20 while maintaining the original distribution.
+- Sampling 5,000 concur samples (from 2.1M)
+- Sampling 5,000 oppose samples (from 941k)
+- Sampling 5,000 neutral samples (from 45k)
+- Reducing the test set size by a factor of 20 + 2 while maintaining the original distribution.
 """
 
 import pandas as pd
@@ -13,9 +13,9 @@ import argparse
 from pathlib import Path
 
 def balance_redditaita(data_dir="./data/preprocessed",
-                       concur_samples=10000,
-                       oppose_samples=10000,
-                       neutral_samples=10000,
+                       concur_samples=5000,
+                       oppose_samples=5000,
+                       neutral_samples=5000,
                        random_seed=42):
     """
     Balance the redditAITA training dataset and overwrite original
@@ -77,7 +77,7 @@ def balance_redditaita(data_dir="./data/preprocessed",
     # Overwrite original training file
     print(f"\nOverwriting original file: {train_file}")
     df_balanced.to_csv(train_file, index=False)
-    print(f"✓ Balanced training data saved (original backed up)")
+    print(f"✓ Balanced training data saved")
 
     
     print("\n" + "="*60)
@@ -163,26 +163,26 @@ def main():
     parser.add_argument(
         '--concur_samples', 
         type=int, 
-        default=10000,
-        help='Number of concur samples to keep (default: 10000)'
+        default=5000,
+        help='Number of concur samples to keep (default: 5000)'
     )
     parser.add_argument(
         '--oppose_samples', 
         type=int, 
-        default=10000,
-        help='Number of oppose samples to keep (default: 10000)'
+        default=5000,
+        help='Number of oppose samples to keep (default: 5000)'
     )
     parser.add_argument(
         '--neutral_samples', 
         type=int, 
-        default=10000,
-        help='Number of neutral samples to keep (default: 10000)'
+        default=5000,
+        help='Number of neutral samples to keep (default: 5000)'
     )
     parser.add_argument(
         '--reduction_factor',
         type=int,
-        default=20,
-        help='Factor to reduce test set size by (default: 20)'
+        default=2,
+        help='Factor to reduce test set size by (default: 2)'
     )
     parser.add_argument(
         '--seed', 
