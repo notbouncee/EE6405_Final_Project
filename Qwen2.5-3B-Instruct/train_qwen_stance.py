@@ -1,12 +1,14 @@
 """
 Stance Detection Training with Qwen2.5-3B-Instruct
 Uses Optuna for hyperparameter optimization and W&B for logging
+Supports CLI arguments for flexible training on different datasets
 """
 
 import pandas as pd
 import torch
 import numpy as np
 import evaluate
+import argparse
 from datasets import Dataset
 from transformers import (
     AutoTokenizer,
@@ -18,13 +20,70 @@ from transformers import (
 import optuna
 from optuna.storages import RDBStorage
 from sklearn.metrics import accuracy_score, f1_score, classification_report
+from pathlib import Path
 
 print("=" * 80)
 print("Qwen2.5-3B-Instruct Stance Detection Training")
 print("=" * 80)
 
+# --- 0. Parse Command Line Arguments ---
+parser = argparse.ArgumentParser(
+    description="Train Qwen2.5-3B-Instruct for stance detection",
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+    epilog="""
+Examples:
+  # Train on Reddit data
+  python train_qwen_stance.py --csv ./data/preprocessed/reddit_preprocessed_for_qwen.csv --output ./results/reddit_model
+
+  # Train on Stance dataset
+  python train_qwen_stance.py --csv ./data/preprocessed/stance_preprocessed_for_qwen.csv --output ./results/stance_model
+
+  # Train on combined data with custom hyperparameters
+  python train_qwen_stance.py --csv ./data/preprocessed/combined_preprocessed_for_qwen.csv --epochs 5 --batch-size 16 --lr 2e-5
+    """
+)
+
+parser.add_argument(
+    "--csv",
+    type=str,
+    default=r"D:\Quang Huy\Documents\EE6405\Project\EE6405_Final_Project\data\preprocessed\combined_preprocessed_for_qwen.csv",
+    help="Path to CSV file for training (default: combined preprocessed data)"
+)
+parser.add_argument(
+    "--output",
+    type=str,
+    default="./qwen_stance_model",
+    help="Output directory for trained model (default: ./qwen_stance_model)"
+)
+parser.add_argument(
+    "--epochs",
+    type=int,
+    default=3,
+    help="Number of training epochs (default: 3)"
+)
+parser.add_argument(
+    "--batch-size",
+    type=int,
+    default=8,
+    help="Training batch size (default: 8)"
+)
+parser.add_argument(
+    "--lr",
+    type=float,
+    default=2e-5,
+    help="Learning rate (default: 2e-5)"
+)
+parser.add_argument(
+    "--max-rows",
+    type=int,
+    default=0,
+    help="Max rows to use from CSV (0 = all, default: 0)"
+)
+
+args = parser.parse_args()
+
 # --- 1. Load Data with Error Handling ---
-csv_file_path = "/opt/tiger/MLLM_AUTO_EVALUATE_PIPELINE/EE6405_Final_Project/data/preprocessed/redditAITA_train.csv"
+csv_file_path = args.csv
 
 print(f"\nLoading data from: {csv_file_path}")
 
@@ -55,7 +114,11 @@ try:
     print(f"\nRows before cleaning: {len(df)}")
     df = df.dropna(subset=['post_text', 'comment_text', 'stance'])
     print(f"Rows after cleaning: {len(df)}")
-    df = df[:12000]
+    
+    # Limit rows if specified
+    if args.max_rows > 0:
+        df = df[:args.max_rows]
+        print(f"Using first {args.max_rows} rows")
     
     # Show stance distribution
     print("\nStance distribution:")
@@ -218,25 +281,36 @@ def model_init(trial=None):
     return model
 
 # --- 8. Training Arguments ---
+output_dir = args.output
+Path(output_dir).mkdir(parents=True, exist_ok=True)
+
 training_args = TrainingArguments(
-    output_dir="./results_qwen",
+    output_dir=output_dir,
     eval_strategy="epoch",
     save_strategy="epoch",
     load_best_model_at_end=True,
     metric_for_best_model="eval_accuracy",
     logging_strategy="epoch",
-    num_train_epochs=3,
-    per_device_train_batch_size=4,  # Reduced for 3B model
-    per_device_eval_batch_size=4,
-    gradient_accumulation_steps=2,  # Effective batch size = 4 * 2 = 8
+    num_train_epochs=args.epochs,
+    per_device_train_batch_size=args.batch_size // 2,  # Reduce for 3B model memory
+    per_device_eval_batch_size=args.batch_size // 2,
+    gradient_accumulation_steps=2,
     warmup_steps=500,
+    learning_rate=args.lr,
     fp16=True,  # Enable mixed precision training
     report_to=None,
-    logging_dir="./logs_qwen",
+    logging_dir=f"{output_dir}/logs",
     run_name="qwen2.5-3b-stance-detection",
     save_total_limit=2,  # Only keep 2 best checkpoints
     push_to_hub=False,
 )
+
+print(f"\nTraining Configuration:")
+print(f"  CSV: {csv_file_path}")
+print(f"  Output Dir: {output_dir}")
+print(f"  Epochs: {args.epochs}")
+print(f"  Batch Size: {args.batch_size}")
+print(f"  Learning Rate: {args.lr}")
 
 # --- 9. Data Collator ---
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
@@ -333,21 +407,21 @@ print("Saving Model")
 print(f"{'='*80}")
 
 try:
-    output_dir = "./qwen_stance_model/final_model"
-    trainer.save_model(output_dir)
-    tokenizer.save_pretrained(output_dir)
+    final_model_dir = f"{output_dir}/final_model"
+    trainer.save_model(final_model_dir)
+    tokenizer.save_pretrained(final_model_dir)
     
-    print(f"✓ Model saved to {output_dir}")
-    print(f"✓ Tokenizer saved to {output_dir}")
+    print(f"✓ Model saved to {final_model_dir}")
+    print(f"✓ Tokenizer saved to {final_model_dir}")
     
     # Save label mappings
     import json
-    with open(f"{output_dir}/label_mappings.json", 'w') as f:
+    with open(f"{final_model_dir}/label_mappings.json", 'w') as f:
         json.dump({
             'label2id': label2id,
             'id2label': id2label
         }, f, indent=2)
-    print(f"✓ Label mappings saved to {output_dir}/label_mappings.json")
+    print(f"✓ Label mappings saved to {final_model_dir}/label_mappings.json")
     
 except Exception as e:
     print(f"✗ Error saving model: {e}")
