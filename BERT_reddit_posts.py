@@ -196,7 +196,35 @@ def make_trainer_for_fold(args, train_ds, val_ds):
     model = AutoModelForSequenceClassification.from_pretrained(
         MODEL_NAME, num_labels=len(LABELS), id2label=ID2LABEL, label2id=LABEL2ID
     )
-    return Trainer(
+    return Trainer(# 1) Importance (fANOVA)
+imp = optuna.importance.get_param_importances(study, evaluator=FanovaImportanceEvaluator())
+print("Param importances:")
+for k, v in imp.items():
+    print(f"{k:28s} {v:.3f}")
+
+ax = plot_param_importances(study)
+ax.figure.savefig("param_importances.png", dpi=200, bbox_inches="tight")
+
+ax = plot_optimization_history(study)
+ax.figure.savefig("opt_history.png", dpi=200, bbox_inches="tight")
+
+# 2) Per-parameter response (effect on score across all trials)
+axes = plot_slice(study)
+
+fig = axes[0].figure
+fig.suptitle("Per-Parameter Performance Slices")
+fig.savefig("param_slices.png", dpi=200, bbox_inches="tight")
+
+# 3) Interactions
+ax = plot_parallel_coordinate(study)
+fig = ax.figure
+fig.suptitle("Parameter Interactions")
+fig.savefig("parallel_coords.png", dpi=200, bbox_inches="tight")
+
+axes_contour = plot_contour(study)
+fig = axes_contour[0, 0].figure
+fig.suptitle("Pairwise Contours")
+fig.savefig("contours.png", dpi=200, bbox_inches="tight")
         model=model,
         args=args,
         train_dataset=train_ds,   ##
@@ -301,8 +329,8 @@ final_trainer = Trainer(
         MODEL_NAME, num_labels=len(LABELS), id2label=ID2LABEL, label2id=LABEL2ID
     ),
     args=final_args,
-    train_dataset=full_train_ds,
-    eval_dataset=full_test_ds,
+    train_dataset=train_ds,
+    eval_dataset=val_ds,
     tokenizer=tokenizer,
     data_collator=DataCollatorWithPadding(tokenizer),
     compute_metrics=compute_metrics
@@ -324,18 +352,36 @@ import matplotlib.pyplot as plt
 # 1) Importance (fANOVA)
 imp = optuna.importance.get_param_importances(study, evaluator=FanovaImportanceEvaluator())
 print("Param importances:")
+# 1) Importance (fANOVA)
+imp = optuna.importance.get_param_importances(study, evaluator=FanovaImportanceEvaluator())
+print("Param importances:")
+
 for k, v in imp.items():
     print(f"{k:28s} {v:.3f}")
 
-fig = plot_param_importances(study); fig.suptitle("Hyperparameter Importance"); fig.savefig("param_importances.png", dpi=200, bbox_inches="tight")
-fig = plot_optimization_history(study); fig.suptitle("Optimization History"); fig.savefig("opt_history.png", dpi=200, bbox_inches="tight")
+ax = plot_param_importances(study)
+ax.figure.savefig("param_importances.png", dpi=200, bbox_inches="tight")
+
+ax = plot_optimization_history(study)
+ax.figure.savefig("opt_history.png", dpi=200, bbox_inches="tight")
 
 # 2) Per-parameter response (effect on score across all trials)
-fig = plot_slice(study); fig.suptitle("Per-Parameter Performance Slices"); fig.savefig("param_slices.png", dpi=200, bbox_inches="tight")
+axes = plot_slice(study)
+
+fig = axes[0].figure
+fig.suptitle("Per-Parameter Performance Slices")
+fig.savefig("param_slices.png", dpi=200, bbox_inches="tight")
 
 # 3) Interactions
-fig = plot_parallel_coordinate(study); fig.suptitle("Parameter Interactions"); fig.savefig("parallel_coords.png", dpi=200, bbox_inches="tight")
-fig = plot_contour(study); fig.suptitle("Pairwise Contours"); fig.savefig("contours.png", dpi=200, bbox_inches="tight")
+ax = plot_parallel_coordinate(study)
+fig = ax.figure
+fig.suptitle("Parameter Interactions")
+fig.savefig("parallel_coords.png", dpi=200, bbox_inches="tight")
+
+axes_contour = plot_contour(study)
+fig = axes_contour[0, 0].figure
+fig.suptitle("Pairwise Contours")
+fig.savefig("contours.png", dpi=200, bbox_inches="tight")
 
 
 ## Custom plots per parameter
