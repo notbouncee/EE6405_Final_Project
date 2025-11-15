@@ -357,7 +357,7 @@ trainer = Trainer(
     eval_dataset=eval_dataset if not args.use_full_data else None,
     tokenizer=tokenizer,
     data_collator=data_collator,
-    eval_dataset=eval_dataset if not args.use_full_data else None,
+    compute_metrics=compute_metrics,
 )
 
 # --- 11. Hyperparameter Search Space ---
