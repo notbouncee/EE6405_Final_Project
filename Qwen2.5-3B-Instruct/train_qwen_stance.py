@@ -309,9 +309,9 @@ training_args = TrainingArguments(
     metric_for_best_model="eval_accuracy",
     logging_strategy="epoch",
     num_train_epochs=args.epochs,
-    per_device_train_batch_size=args.batch_size // 2,  # Reduce for 3B model memory
-    per_device_eval_batch_size=args.batch_size // 2,
-    gradient_accumulation_steps=2,
+    per_device_train_batch_size=1,  # Reduce for 3B model memory
+    per_device_eval_batch_size=1,
+    gradient_accumulation_steps=8,
     warmup_steps=500,
     learning_rate=args.lr,
     fp16=True,  # Enable mixed precision training
@@ -350,7 +350,7 @@ def optuna_hp_space(trial):
     return {
         "learning_rate": trial.suggest_float("learning_rate", 1e-6, 5e-5, log=True),
         "gradient_accumulation_steps": trial.suggest_categorical(
-            "gradient_accumulation_steps", [1, 2, 4]
+            "gradient_accumulation_steps", [4, 8, 16]
         ),
         "weight_decay": trial.suggest_float("weight_decay", 0.0, 0.3),
         "warmup_steps": trial.suggest_int("warmup_steps", 100, 1000, step=100),
