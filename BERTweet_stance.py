@@ -1,112 +1,106 @@
-"""
-BERTweet Stance Detection with Hyperparameter Tuning
-"""
-
-import numpy as np
-import pandas as pd
-import torch
-import optuna
-import matplotlib.pyplot as plt
+import numpy as np, pandas as pd, torch
 from datasets import Dataset
-from sklearn.metrics import (accuracy_score, classification_report, confusion_matrix,
-                            precision_recall_fscore_support)
-from sklearn.model_selection import train_test_split, StratifiedKFold
-from transformers import (AutoTokenizer, AutoModelForSequenceClassification,
-                         TrainingArguments, Trainer, DataCollatorWithPadding)
-from optuna.importance import FanovaImportanceEvaluator
-from optuna.visualization.matplotlib import (plot_param_importances, plot_optimization_history,
-                                            plot_slice, plot_parallel_coordinate, plot_contour)
+from sklearn.metrics import accuracy_score, f1_score, classification_report, confusion_matrix, precision_recall_fscore_support
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, TrainingArguments, Trainer, DataCollatorWithPadding
+import torch.nn.functional as F
+from sklearn.model_selection import train_test_split
 
 
-# ==================== CONFIGURATION ====================
-
-# Model
-MODEL_NAME = "vinai/bertweet-large"
-LABELS = ["concur", "oppose", "neutral"]
-LABEL2ID = {l: i for i, l in enumerate(LABELS)}
-ID2LABEL = {i: l for l, i in LABEL2ID.items()}
-
-# Data paths
-TRAIN_PATH = "data/preprocessed/stance_data_cleaned_train.csv"
-TEST_PATH = "data/preprocessed/stance_data_cleaned_test.csv"
-
-# Training hyperparameters
+# Repro
 SEED = 42
+torch.manual_seed(SEED); np.random.seed(SEED)
+
+# Model: keep BERT
+MODEL_NAME = "vinai/bertweet-large"
+
+# File paths (put your CSVs in the same folder)
+TRAIN_PATH = "data/preprocessed/stance_data_cleaned_train.csv"
+TEST_PATH  = "data/preprocessed/stance_data_cleaned_test.csv"
+
+# Labels in your preprocessed data  (edit if required)
+LABELS   = ["concur","oppose","neutral"]
+LABEL2ID = {l:i for i,l in enumerate(LABELS)}
+ID2LABEL = {i:l for l,i in LABEL2ID.items()}
+
+# Set hyperparameters
 EPOCHS = 3
 LR = 2e-5
-BATCH_SIZE = 4  
+BATCH_SIZE = 4      
 MAX_LEN = 512
 
-# Optuna settings
-N_TRIALS = 10
-N_CV_SPLITS = 2
-
-# Reproducibility
-torch.manual_seed(SEED)
-np.random.seed(SEED)
-
-
-# ==================== DATA UTILITIES ====================
 
 def load_split(path: str):
-    """Load and clean CSV data"""
     try:
         df = pd.read_csv(path)
     except UnicodeDecodeError:
         df = pd.read_csv(path, encoding="latin1")
 
-    # Validate columns
-    need = {"post_text", "comment_text"}
+    need = {"post_text","comment_text"}  # stance optional for pure inference
     assert need.issubset(df.columns), f"{path} must have columns: {need}"
 
-    # Clean text
-    df["post_text"] = df["post_text"].astype(str).str.strip()
+    # hygiene
+    df["post_text"]    = df["post_text"].astype(str).str.strip()
     df["comment_text"] = df["comment_text"].astype(str).str.strip()
 
-    # Process labels if present
     if "stance" in df.columns:
         df["stance"] = df["stance"].astype(str).str.lower().str.strip()
-        df = df[df["stance"].isin(LABEL2ID)]
+        df = df[df["stance"].isin(LABEL2ID)]               # keep only known labels
         df["label"] = df["stance"].map(LABEL2ID).astype(int)
 
-    # Remove duplicates
-    keep_cols = ["post_text", "comment_text"] + (["label"] if "label" in df.columns else [])
+    # no duplicate triples
+    keep_cols = ["post_text","comment_text"] + (["label"] if "label" in df.columns else [])
     df = df.drop_duplicates(subset=keep_cols).reset_index(drop=True)
-    
     return df
 
 
-def make_dataset(df: pd.DataFrame, tokenizer, has_labels: bool):
-    """Convert DataFrame to HuggingFace Dataset with tokenization"""
-    cols = ["comment_text", "post_text"] + (["label"] if has_labels else [])
+train_df = load_split(TRAIN_PATH)
+test = load_split(TEST_PATH)
+
+
+train, val = train_test_split(train_df, test_size=0.2, random_state=42, stratify=train_df['stance'])
+print("Train shape:", train.shape)
+print("Val shape:", val.shape)
+print("Label distribution in train:\n", train["label"].value_counts())
+print("Label distribution in val:\n", val["label"].value_counts())
+
+## Tokenizer
+
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=True, normalization=True)
+
+def make_ds(df: pd.DataFrame, has_labels: bool):
+    cols = ["comment_text","post_text"] + (["label"] if has_labels else [])
     ds = Dataset.from_pandas(df[cols])
 
-    def tokenize_batch(batch):
+    def _tok(batch):
         return tokenizer(
-            batch["comment_text"],
-            batch["post_text"],
+            batch["comment_text"],   
+            batch["post_text"],     
+            #padding =True,
             truncation=True,
             max_length=MAX_LEN
         )
 
-    ds = ds.map(tokenize_batch, batched=True, remove_columns=["comment_text", "post_text"])
-    
-    # BERTweet uses RoBERTa tokenizer - no token_type_ids
-    format_cols = ["input_ids", "attention_mask"] + (["label"] if has_labels else [])
-    ds = ds.with_format("torch", columns=format_cols)
-    
+    ds = ds.map(_tok, batched=True, remove_columns=["comment_text","post_text"])
+    if has_labels:
+        ds = ds.with_format("torch", columns=["input_ids","attention_mask","label"])
+    else:
+        ds = ds.with_format("torch", columns=["input_ids","attention_mask"])
     return ds
 
+train_ds = make_ds(train, has_labels=True)
+val_ds   = make_ds(val,   has_labels=True)
+test_ds  = make_ds(test,  has_labels=("label" in test.columns))
 
-# ==================== METRICS ====================
+## Computing Metrics
 
 def compute_metrics(eval_pred):
-    """Compute classification metrics"""
     logits, labels = eval_pred
     preds = np.argmax(logits, axis=1)
 
+    # Accuracy
     acc = accuracy_score(labels, preds)
-    
+
+    # Precision / Recall / F1 (macro and micro)
     precision_macro, recall_macro, f1_macro, _ = precision_recall_fscore_support(
         labels, preds, average="macro", zero_division=0
     )
@@ -116,9 +110,10 @@ def compute_metrics(eval_pred):
 
     # Specificity (average true negative rate)
     cm = confusion_matrix(labels, preds)
+    num_classes = cm.shape[0]
     specificity_scores = []
-    for i in range(cm.shape[0]):
-        tn = np.sum(np.delete(np.delete(cm, i, axis=0), i, axis=1))
+    for i in range(num_classes):
+        tn = np.sum(np.delete(np.delete(cm, i, axis=0), i, axis=1))  # remove row/col i
         fp = np.sum(cm[:, i]) - cm[i, i]
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
         specificity_scores.append(specificity)
@@ -135,330 +130,284 @@ def compute_metrics(eval_pred):
         "specificity_macro": specificity_macro
     }
 
+## Model and Trainer
 
-# ==================== MODEL UTILITIES ====================
 
-def create_model():
-    """Create fresh model instance"""
-    return AutoModelForSequenceClassification.from_pretrained(
-        MODEL_NAME,
-        num_labels=len(LABELS),
-        id2label=ID2LABEL,
-        label2id=LABEL2ID
+model = AutoModelForSequenceClassification.from_pretrained(
+    MODEL_NAME,
+    num_labels=len(LABELS),
+    id2label=ID2LABEL,
+    label2id=LABEL2ID
+)
+
+args = TrainingArguments(
+    output_dir="./bertweet_stance_baseline",
+    learning_rate=LR,
+    per_device_train_batch_size=BATCH_SIZE,
+    gradient_accumulation_steps=4,
+    per_device_eval_batch_size=BATCH_SIZE,
+    num_train_epochs=EPOCHS,
+    weight_decay=0.01,
+    logging_steps=50,
+    seed=SEED,
+    eval_strategy="epoch",        # use correct arg name
+    save_strategy="epoch",
+    load_best_model_at_end=True,
+    metric_for_best_model="f1_macro",
+    greater_is_better=True,
+    report_to=[]                         # avoid wandb nagging
+)
+    # keep it minimal so it works across transformers versions
+
+
+trainer = Trainer(
+    model=model,
+    args=args,
+    train_dataset=train_ds,
+    eval_dataset=val_ds,
+    tokenizer=tokenizer,
+    data_collator=DataCollatorWithPadding(tokenizer),
+    compute_metrics=compute_metrics
+)
+
+## Evaluating on the validation set
+
+trainer.train()
+
+# Baseline evaluation on val 
+metrics = trainer.evaluate(val_ds)
+print(metrics)
+
+# If you want a confusion matrix and per-class report:
+pred = trainer.predict(val_ds)
+y_pred = pred.predictions.argmax(axis=1)
+y_true = np.array(val_ds["label"])
+
+print(classification_report(y_true, y_pred, target_names=LABELS))
+print(confusion_matrix(y_true, y_pred))
+
+
+## Hyperparameter tuning with Optuna and Cross-Validation
+
+import optuna
+from sklearn.model_selection import StratifiedKFold
+from transformers import TrainingArguments, Trainer
+
+def make_trainer_for_fold(args, train_ds, val_ds):
+    model = AutoModelForSequenceClassification.from_pretrained(
+        MODEL_NAME, num_labels=len(LABELS), id2label=ID2LABEL, label2id=LABEL2ID
     )
-
-
-def create_trainer(model, args, train_ds, eval_ds, tokenizer):
-    """Create Trainer instance"""
     return Trainer(
         model=model,
         args=args,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
+        train_dataset=train_ds,   ##
+        eval_dataset=val_ds,        ## 
         tokenizer=tokenizer,
         data_collator=DataCollatorWithPadding(tokenizer),
         compute_metrics=compute_metrics
     )
 
-
-# ==================== HYPERPARAMETER OPTIMIZATION ====================
-
-def optuna_objective(trial, full_df, tokenizer):
-    """Optuna objective function with cross-validation"""
-    # Hyperparameter search space
+def objective(trial, full_df, n_splits=5):
+    # Search space for hyperparameters
     lr = trial.suggest_float("learning_rate", 5e-6, 1e-4, log=True)
-    batch = trial.suggest_categorical("per_device_train_batch_size", [2, 4, 8])
+    batch = trial.suggest_categorical("per_device_train_batch_size", [16, 32])
     epochs = trial.suggest_int("num_train_epochs", 2, 5)
     wd = trial.suggest_float("weight_decay", 0.0, 0.1)
-    grad_accum = trial.suggest_categorical("gradient_accumulation_steps", [1, 2, 4])
 
-    skf = StratifiedKFold(n_splits=N_CV_SPLITS, shuffle=True, random_state=SEED)
-    f1_scores = []
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+    f1s = []
 
     for fold, (tr_idx, va_idx) in enumerate(skf.split(full_df, full_df["label"]), 1):
         tr_df = full_df.iloc[tr_idx].reset_index(drop=True)
         va_df = full_df.iloc[va_idx].reset_index(drop=True)
-        tr_ds = make_dataset(tr_df, tokenizer, has_labels=True)
-        va_ds = make_dataset(va_df, tokenizer, has_labels=True)
+        tr_ds = make_ds(tr_df, has_labels=True)
+        va_ds = make_ds(va_df, has_labels=True)
 
         args = TrainingArguments(
             output_dir=f"./cv_trial{trial.number}_fold{fold}",
             learning_rate=lr,
             per_device_train_batch_size=batch,
             per_device_eval_batch_size=batch,
-            gradient_accumulation_steps=grad_accum,
             num_train_epochs=epochs,
             weight_decay=wd,
-            evaluation_strategy="epoch",
+            eval_strategy="epoch",
             save_strategy="no",
             load_best_model_at_end=False,
             dataloader_num_workers=0,
             logging_steps=50,
             report_to=[],
-            seed=SEED,
-            fp16=True,  # Enable mixed precision training
-            optim="adamw_torch_fused"  # More memory efficient optimizer
+            seed=SEED
         )
 
-        model = create_model()
-        trainer = create_trainer(model, args, tr_ds, va_ds, tokenizer)
-        
-        try:
-            trainer.train()
-            metrics = trainer.evaluate(va_ds)
-            f1_scores.append(metrics["eval_f1_macro"])
+        trainer = make_trainer_for_fold(args, tr_ds, va_ds)
+        trainer.train()
+        metrics = trainer.evaluate(va_ds)
+        f1s.append(metrics["eval_f1_macro"])
 
-            # Pruning support
-            trial.report(metrics["eval_f1_macro"], step=fold)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
-        finally:
-            # Critical: Clean up GPU memory after each fold
-            del model
-            del trainer
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
+        # pruning support
+        trial.report(metrics["eval_f1_macro"], step=fold)
+        if trial.should_prune():
+            raise optuna.TrialPruned()
 
-    mean_f1 = float(np.mean(f1_scores))
-    trial.set_user_attr("fold_f1s", f1_scores)
+    mean_f1 = float(np.mean(f1s))
+    trial.set_user_attr("fold_f1s", f1s)
     return mean_f1
 
 
-# ==================== VISUALIZATION ====================
+## Running the Optuna study
+# Ensure train_df_reddit has labels
+assert "label" in train_df.columns
 
-def plot_param_response(trials_df, param, metric_col="value"):
-    """Plot parameter vs metric relationship"""
-    df = trials_df[trials_df["state"] == "COMPLETE"].copy()
-    df["value"] = df["value"].astype(float)
+sampler = optuna.samplers.TPESampler(seed=SEED)
+pruner  = optuna.pruners.MedianPruner(n_warmup_steps=1)
+
+study = optuna.create_study(direction="maximize", sampler=sampler, pruner=pruner, study_name="bert_stance_cv")
+study.optimize(lambda t: objective(t, train_df, n_splits=2), n_trials=10, show_progress_bar=True)
+
+print("Best CV macro-F1:", study.best_value)
+print("Best params:", study.best_params)
+
+# Keep all trials for later visuals
+trials_df = study.trials_dataframe(attrs=("number","value","state","params","user_attrs","system_attrs"))
+trials_df.to_csv("optuna_trials.csv", index=False)
+trials_df.head()
+
+
+## Final model training with best hyperparameters
+best = study.best_params
+
+full_train_ds = make_ds(train_df, has_labels=True)
+full_test_ds  = make_ds(test,  has_labels=("label" in test.columns))
+
+final_args = TrainingArguments(
+    output_dir="./final_cv_stance_best",
+    learning_rate=best["learning_rate"],
+    per_device_train_batch_size=best["per_device_train_batch_size"],
+    per_device_eval_batch_size=best["per_device_train_batch_size"],
+    num_train_epochs=best.get("num_train_epochs", EPOCHS),
+    weight_decay=best["weight_decay"],
+    eval_strategy="epoch",
+    save_strategy="epoch",
+    load_best_model_at_end=True,
+    metric_for_best_model="eval_f1_macro",
+    greater_is_better=True,
+    dataloader_num_workers=0,
+    logging_steps=50,
+    report_to=[],
+    seed=SEED
+)
+
+final_trainer = Trainer(
+    model=AutoModelForSequenceClassification.from_pretrained(
+        MODEL_NAME, num_labels=len(LABELS), id2label=ID2LABEL, label2id=LABEL2ID
+    ),
+    args=final_args,
+    train_dataset=train_ds,
+    eval_dataset=val_ds,
+    tokenizer=tokenizer,
+    data_collator=DataCollatorWithPadding(tokenizer),
+    compute_metrics=compute_metrics
+)
+
+final_trainer.train()
+final_metrics = final_trainer.evaluate(full_test_ds)
+print("--- Final Test Metrics Dictionary ---")
+print(final_metrics)
+
+print("\n--- Final Test Set Report & Confusion Matrix ---")
+test_pred = final_trainer.predict(full_test_ds)
+test_y_pred = test_pred.predictions.argmax(axis=1)
+
+# Make sure your test set has a 'label' column to compare against
+if "label" in full_test_ds.column_names:
+    test_y_true = np.array(full_test_ds["label"])
     
+    print(classification_report(test_y_true, test_y_pred, target_names=LABELS))
+    print("\nConfusion Matrix:")
+    print(confusion_matrix(test_y_true, test_y_pred))
+else:
+    print("Test dataset does not have labels, cannot generate report.")
+
+## Optuna visualization of results:
+from optuna.importance import FanovaImportanceEvaluator
+from optuna.visualization.matplotlib import (
+    plot_param_importances, plot_optimization_history, plot_slice,
+    plot_parallel_coordinate, plot_contour
+)
+import matplotlib.pyplot as plt
+
+# 1) Importance (fANOVA)
+imp = optuna.importance.get_param_importances(study, evaluator=FanovaImportanceEvaluator())
+print("\nParam importances:")
+for k, v in imp.items():
+    print(f"{k:28s} {v:.3f}")
+
+ax = plot_param_importances(study)
+ax.figure.savefig("stance_param_importances.png", dpi=200, bbox_inches="tight")
+
+ax = plot_optimization_history(study)
+ax.figure.savefig("stance_opt_history.png", dpi=200, bbox_inches="tight")
+
+# 2) Per-parameter response (effect on score across all trials)
+axes = plot_slice(study)
+
+fig = axes[0].figure
+fig.suptitle("Per-Parameter Performance Slices")
+fig.savefig("stance_param_slices.png", dpi=200, bbox_inches="tight")
+
+# 3) Interactions
+ax = plot_parallel_coordinate(study)
+fig = ax.figure
+fig.suptitle("Parameter Interactions")
+fig.savefig("stance_parallel_coords.png", dpi=200, bbox_inches="tight")
+
+axes_contour = plot_contour(study)
+fig = axes_contour[0, 0].figure
+fig.suptitle("Pairwise Contours")
+fig.savefig("stance_contours.png", dpi=200, bbox_inches="tight")
+
+
+## Custom plots per parameter
+# trials_df already saved above
+import pandas as pd, numpy as np, matplotlib.pyplot as plt
+
+df = trials_df[trials_df["state"]=="COMPLETE"].copy()
+df["value"] = df["value"].astype(float)
+
+def plot_numeric_response(df, param, metric_col="value", bins=8):
     x = pd.to_numeric(df[f"params_{param}"], errors="coerce")
     y = df[metric_col]
-    mask = ~x.isna() & ~y.isna()
-    x, y = x[mask].values, y[mask].values
-    
-    if len(x) < 2:
-        return
+    m = ~x.isna() & ~y.isna()
+    x, y = x[m].values, y[m].values
+    if len(x) < 2: return
+    plt.figure()
+    plt.scatter(x, y, alpha=0.65)
+    plt.xlabel(param); plt.ylabel(metric_col); plt.title(f"{param} vs {metric_col}")
+    edges = np.linspace(x.min(), x.max(), bins+1)
+    idx = np.digitize(x, edges) - 1
+    means = [y[idx==i].mean() for i in range(bins)]
+    mids  = (edges[:-1] + edges[1:]) / 2
+    plt.plot(mids, means, linewidth=2)
+    plt.tight_layout(); plt.savefig(f"resp_{param}.png", dpi=200); plt.close()
 
-    # Numeric plot with binned means
-    if pd.to_numeric(df[f"params_{param}"], errors="coerce").notna().mean() > 0.7:
-        plt.figure()
-        plt.scatter(x, y, alpha=0.65)
-        plt.xlabel(param)
-        plt.ylabel(metric_col)
-        plt.title(f"{param} vs {metric_col}")
-        
-        bins = 8
-        edges = np.linspace(x.min(), x.max(), bins + 1)
-        idx = np.digitize(x, edges) - 1
-        means = [y[idx == i].mean() for i in range(bins)]
-        mids = (edges[:-1] + edges[1:]) / 2
-        plt.plot(mids, means, linewidth=2)
-        
-        plt.tight_layout()
-        plt.savefig(f"resp_{param}.png", dpi=200)
-        plt.close()
-    
-    # Categorical plot
-    else:
-        sub = df[[f"params_{param}", metric_col]].dropna()
-        if sub.empty:
-            return
-        g = sub.groupby(f"params_{param}")[metric_col]
-        cats = list(g.mean().index)
-        means = g.mean().values
-        stds = g.std().fillna(0).values
-        
-        plt.figure()
-        pos = np.arange(len(cats))
-        plt.bar(pos, means, yerr=stds)
-        plt.xticks(pos, cats, rotation=20, ha="right")
-        plt.ylabel(metric_col)
-        plt.title(f"{param} (mean ± std)")
-        plt.tight_layout()
-        plt.savefig(f"resp_{param}.png", dpi=200)
-        plt.close()
+def plot_categorical_response(df, param, metric_col="value"):
+    sub = df[[f"params_{param}", metric_col]].dropna()
+    if sub.empty: return
+    g = sub.groupby(f"params_{param}")[metric_col]
+    cats, means, stds = list(g.mean().index), g.mean().values, g.std().fillna(0).values
+    plt.figure()
+    pos = np.arange(len(cats))
+    plt.bar(pos, means, yerr=stds)
+    plt.xticks(pos, cats, rotation=20, ha="right")
+    plt.ylabel(metric_col); plt.title(f"{param} (mean ± std)")
+    plt.tight_layout(); plt.savefig(f"resp_{param}.png", dpi=200); plt.close()
 
-
-def generate_visualizations(study, trials_df):
-    """Generate all Optuna visualization plots"""
-    # Importance
-    imp = optuna.importance.get_param_importances(study, evaluator=FanovaImportanceEvaluator())
-    print("\nHyperparameter Importances:")
-    for k, v in imp.items():
-        print(f"  {k:28s} {v:.3f}")
-
-    fig = plot_param_importances(study)
-    fig.suptitle("Hyperparameter Importance")
-    fig.savefig("param_importances.png", dpi=200, bbox_inches="tight")
-    plt.close()
-
-    fig = plot_optimization_history(study)
-    fig.suptitle("Optimization History")
-    fig.savefig("opt_history.png", dpi=200, bbox_inches="tight")
-    plt.close()
-
-    fig = plot_slice(study)
-    fig.suptitle("Per-Parameter Performance Slices")
-    fig.savefig("param_slices.png", dpi=200, bbox_inches="tight")
-    plt.close()
-
-    fig = plot_parallel_coordinate(study)
-    fig.suptitle("Parameter Interactions")
-    fig.savefig("parallel_coords.png", dpi=200, bbox_inches="tight")
-    plt.close()
-
-    fig = plot_contour(study)
-    fig.suptitle("Pairwise Contours")
-    fig.savefig("contours.png", dpi=200, bbox_inches="tight")
-    plt.close()
-
-    # Custom per-parameter plots
-    for col in trials_df.columns:
-        if col.startswith("params_"):
-            param = col.replace("params_", "")
-            plot_param_response(trials_df, param)
-
-
-# ==================== MAIN EXECUTION ====================
-
-def main():
-    print("=" * 80)
-    print("BERTweet Stance Detection - Training Pipeline")
-    print("=" * 80)
-    
-    # Load data
-    print("\n[1/6] Loading data...")
-    train_df = load_split(TRAIN_PATH)
-    test_df = load_split(TEST_PATH)
-    train, val = train_test_split(train_df, test_size=0.2, random_state=SEED, 
-                                  stratify=train_df['stance'])
-    
-    print(f"  Train: {train.shape[0]} samples")
-    print(f"  Val:   {val.shape[0]} samples")
-    print(f"  Test:  {test_df.shape[0]} samples")
-    
-    # Initialize tokenizer
-    print("\n[2/6] Initializing tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, use_fast=True, normalization=True)
-    
-    # Prepare datasets
-    train_ds = make_dataset(train, tokenizer, has_labels=True)
-    val_ds = make_dataset(val, tokenizer, has_labels=True)
-    test_ds = make_dataset(test_df, tokenizer, has_labels=("label" in test_df.columns))
-    
-    # Baseline training
-    print("\n[3/6] Training baseline model...")
-    baseline_args = TrainingArguments(
-        output_dir="./BERTweet_stance_baseline",
-        learning_rate=LR,
-        per_device_train_batch_size=BATCH_SIZE,
-        per_device_eval_batch_size=BATCH_SIZE,
-        gradient_accumulation_steps=4,  # Effective batch size = 4 * 4 = 16
-        num_train_epochs=EPOCHS,
-        weight_decay=0.01,
-        logging_steps=50,
-        seed=SEED,
-        evaluation_strategy="epoch",
-        save_strategy="epoch",
-        load_best_model_at_end=True,
-        metric_for_best_model="accuracy",
-        greater_is_better=True,
-        report_to=[],
-        fp16=True,  # Enable mixed precision
-        optim="adamw_torch_fused"  # Memory efficient optimizer
-    )
-    
-    baseline_trainer = create_trainer(create_model(), baseline_args, train_ds, val_ds, tokenizer)
-    baseline_trainer.train()
-    
-    # Evaluate baseline
-    print("\n  Baseline validation results:")
-    metrics = baseline_trainer.evaluate(val_ds)
-    for k, v in metrics.items():
-        if not k.startswith("eval_"):
-            continue
-        print(f"    {k}: {v:.4f}")
-    
-    pred = baseline_trainer.predict(val_ds)
-    y_pred = pred.predictions.argmax(axis=1)
-    y_true = np.array(val_ds["label"])
-    print("\n  Classification Report:")
-    print(classification_report(y_true, y_pred, target_names=LABELS))
-    
-    # Clean up baseline model before starting Optuna
-    del baseline_trainer
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    
-    # Hyperparameter optimization
-    print(f"\n[4/6] Starting Optuna optimization ({N_TRIALS} trials, {N_CV_SPLITS}-fold CV)...")
-    sampler = optuna.samplers.TPESampler(seed=SEED)
-    pruner = optuna.pruners.MedianPruner(n_warmup_steps=1)
-    study = optuna.create_study(direction="maximize", sampler=sampler, pruner=pruner,
-                                study_name="bertweet_stance_cv")
-    
-    study.optimize(lambda t: optuna_objective(t, train_df, tokenizer), 
-                   n_trials=N_TRIALS, show_progress_bar=True)
-    
-    print(f"\n  Best CV macro-F1: {study.best_value:.4f}")
-    print("  Best hyperparameters:")
-    for k, v in study.best_params.items():
-        print(f"    {k}: {v}")
-    
-    # Save trials
-    trials_df = study.trials_dataframe(attrs=("number", "value", "state", "params",
-                                              "user_attrs", "system_attrs"))
-    trials_df.to_csv("optuna_trials.csv", index=False)
-    
-    # Final model with best hyperparameters
-    print("\n[5/6] Training final model with best hyperparameters...")
-    best = study.best_params
-    full_train_ds = make_dataset(train_df, tokenizer, has_labels=True)
-    full_test_ds = make_dataset(test_df, tokenizer, has_labels=("label" in test_df.columns))
-    
-    final_args = TrainingArguments(
-        output_dir="./final_cv_stance_best",
-        learning_rate=best["learning_rate"],
-        per_device_train_batch_size=best["per_device_train_batch_size"],
-        per_device_eval_batch_size=best["per_device_train_batch_size"],
-        gradient_accumulation_steps=best.get("gradient_accumulation_steps", 1),
-        num_train_epochs=best.get("num_train_epochs", EPOCHS),
-        weight_decay=best["weight_decay"],
-        evaluation_strategy="epoch",
-        save_strategy="epoch",
-        load_best_model_at_end=True,
-        metric_for_best_model="f1_macro",
-        greater_is_better=True,
-        dataloader_num_workers=0,
-        logging_steps=50,
-        report_to=[],
-        seed=SEED,
-        fp16=True,
-        optim="adamw_torch_fused"
-    )
-    
-    final_trainer = create_trainer(create_model(), final_args, full_train_ds, 
-                                   full_test_ds, tokenizer)
-    final_trainer.train()
-    
-    print("\n  Final test results:")
-    final_metrics = final_trainer.evaluate(full_test_ds)
-    for k, v in final_metrics.items():
-        if not k.startswith("eval_"):
-            continue
-        print(f"    {k}: {v:.4f}")
-    
-    # Generate visualizations
-    print("\n[6/6] Generating visualizations...")
-    generate_visualizations(study, trials_df)
-    print("  Saved: param_importances.png, opt_history.png, param_slices.png,")
-    print("         parallel_coords.png, contours.png, resp_*.png")
-    
-    print("\n" + "=" * 80)
-    print("Training complete!")
-    print("=" * 80)
-
-
-if __name__ == "__main__":
-    main()
+for c in df.columns:
+    if c.startswith("params_"):
+        p = c.replace("params_","")
+        series = df[c]
+        # heuristic: if most values parse to numeric, treat as numeric
+        if pd.to_numeric(series, errors="coerce").notna().mean() > 0.7:
+            plot_numeric_response(df, p)
+        else:
+            plot_categorical_response(df, p)
