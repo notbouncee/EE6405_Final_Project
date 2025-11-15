@@ -85,6 +85,17 @@ parser.add_argument(
     default="Qwen/Qwen2.5-1.5B-Instruct",
     help="Model name or path (default: Qwen/Qwen2.5-3B-Instruct). Examples: Qwen/Qwen2.5-0.5B-Instruct, Qwen/Qwen2.5-1.5B-Instruct"
 )
+parser.add_argument(
+    "--fp16",
+    action="store_true",
+    help="Enable mixed precision training (FP16) to reduce memory usage"
+)
+
+parser.add_argument(
+    "--gradient_checkpointing",
+    action="store_true",
+    help="Enable gradient checkpointing to save GPU memory at the cost of extra computation"
+)
 
 args = parser.parse_args()
 
