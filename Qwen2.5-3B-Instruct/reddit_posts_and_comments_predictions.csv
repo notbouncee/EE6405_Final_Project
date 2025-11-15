@@ -1,0 +1,16 @@
+post,comment,true_label,predicted_label,explanation
+"Hey everyone,
+
+NeurIPS 2025 reviews should be dropping soon (July 24th AoE), and I thought it migh...","Friendly reminder that reviews this year are scored from 1-6, not 1-10...",neutral,skipped,dry-run: model not loaded
+"Hey everyone,
+
+NeurIPS 2025 reviews should be dropping soon (July 24th AoE), and I thought it migh...",I had a dream recently where my upcoming average NeurIPS reviewer score was revealed to me. Once I g...,neutral,skipped,dry-run: model not loaded
+"Hey everyone,
+
+NeurIPS 2025 reviews should be dropping soon (July 24th AoE), and I thought it migh...",I will treat the scores as a divine intervention to leave academia after 7 years. At least there isn...,concur,skipped,dry-run: model not loaded
+"Hey everyone,
+
+NeurIPS 2025 reviews should be dropping soon (July 24th AoE), and I thought it migh...","July 24, so as long as it's July 24 somewhere it's fine, so it'll be at the latest July 25, and a sm...",concur,skipped,dry-run: model not loaded
+"Hey everyone,
+
+NeurIPS 2025 reviews should be dropping soon (July 24th AoE), and I thought it migh...","Well, if you feel heart-broken, be assured that you're not alone.....",concur,skipped,dry-run: model not loaded

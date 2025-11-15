@@ -11,7 +11,7 @@ print("Qwen3 CSV Processing with Error Handling")
 print("=" * 80)
 
 # ---------------------------
-# CLI options for quick runs
+# Options for quick runs
 # ---------------------------
 parser = argparse.ArgumentParser(description="Run Qwen3 post/comment processing (with optional dry-run)")
 parser.add_argument("--csv", type=str, default=r"D:\Quang Huy\Documents\EE6405\Project\EE6405_Final_Project\data\preprocessed\reddit_posts_and_comments.csv", help="Path to CSV file to process (default: combined preprocessed data)")
@@ -207,7 +207,7 @@ print(f"\n{'='*80}")
 print("Running Predictions on Sample Data")
 print(f"{'='*80}")
 
-# Process all rows loaded (usually limited by --nrows). The CLI default is 5 rows.
+# Process all rows loaded (usually limited by --nrows). The default is 5 rows.
 sample_size = len(df)
 print(f"\nProcessing {sample_size} samples...")
 
