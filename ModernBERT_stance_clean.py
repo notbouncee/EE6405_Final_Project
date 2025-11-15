@@ -275,7 +275,6 @@ trials_df.head()
 ## Final model training with best hyperparameters
 best = study.best_params
 
-full_train_ds = make_ds(train_df, has_labels=True)
 full_test_ds  = make_ds(test,  has_labels=("label" in test.columns))
 
 final_args = TrainingArguments(
@@ -301,8 +300,8 @@ final_trainer = Trainer(
         MODEL_NAME, num_labels=len(LABELS), id2label=ID2LABEL, label2id=LABEL2ID
     ),
     args=final_args,
-    train_dataset=full_train_ds,
-    eval_dataset=full_test_ds,
+    train_dataset=train_ds,
+    eval_dataset=val_ds,
     tokenizer=tokenizer,
     data_collator=DataCollatorWithPadding(tokenizer),
     compute_metrics=compute_metrics
