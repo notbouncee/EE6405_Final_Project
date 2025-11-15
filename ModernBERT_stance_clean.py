@@ -311,6 +311,22 @@ final_trainer.train()
 final_metrics = final_trainer.evaluate(full_test_ds)
 print(final_metrics)
 
+print("\n--- Final Test Set Report & Confusion Matrix ---") 
+test_pred = final_trainer.predict(full_test_ds) 
+test_y_pred = test_pred.predictions.argmax(axis=1) 
+
+# Make sure your test set has a 'label' column to compare against 
+
+if "label" in full_test_ds.column_names: 
+  test_y_true = np.array(full_test_ds["label"])   
+  print(classification_report(test_y_true, test_y_pred, 
+target_names=LABELS)) 
+  print("\nConfusion Matrix:") 
+  print(confusion_matrix(test_y_true, test_y_pred)) 
+
+else: 
+  print("Test dataset does not have labels, cannot generate report.")
+
 
 ## Optuna visualization of results:
 from optuna.importance import FanovaImportanceEvaluator
