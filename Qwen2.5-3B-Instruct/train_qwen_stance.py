@@ -96,6 +96,11 @@ parser.add_argument(
     action="store_true",
     help="Enable gradient checkpointing to save GPU memory at the cost of extra computation"
 )
+parser.add_argument(
+    "--use_full_data",
+    action="store_true",
+    help="Use the entire dataset as training dataset (no train-test split)"
+)
 
 args = parser.parse_args()
 
@@ -230,9 +235,14 @@ tokenized_dataset = dataset.map(
 )
 
 # Split into train/eval
-dataset_splits = tokenized_dataset.train_test_split(test_size=0.2, seed=42)
-train_dataset = dataset_splits['train']
-eval_dataset = dataset_splits['test']
+if args.use_full_data:
+    print("\nUsing the entire dataset as training (no evaluation split)")
+    train_dataset = tokenized_dataset
+    eval_dataset = None  # Trainer will skip evaluation
+else:
+    dataset_splits = tokenized_dataset.train_test_split(test_size=0.2, seed=42)
+    train_dataset = dataset_splits['train']
+    eval_dataset = dataset_splits['test']
 
 print(f"Train dataset size: {len(train_dataset)}")
 print(f"Eval dataset size: {len(eval_dataset)}")
@@ -344,10 +354,10 @@ trainer = Trainer(
     model_init=model_init,
     args=training_args,
     train_dataset=train_dataset,
-    eval_dataset=eval_dataset,
+    eval_dataset=eval_dataset if not args.use_full_data else None,
     tokenizer=tokenizer,
     data_collator=data_collator,
-    compute_metrics=compute_metrics,
+    eval_dataset=eval_dataset if not args.use_full_data else None,
 )
 
 # --- 11. Hyperparameter Search Space ---
