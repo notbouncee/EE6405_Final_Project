@@ -245,7 +245,7 @@ else:
     eval_dataset = dataset_splits['test']
 
 print(f"Train dataset size: {len(train_dataset)}")
-print(f"Eval dataset size: {len(eval_dataset)}")
+#print(f"Eval dataset size: {len(eval_dataset)}")
 
 # --- 5. Setup Metrics ---
 accuracy_metric = evaluate.load("accuracy")
