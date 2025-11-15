@@ -42,6 +42,18 @@ def extract_label(text):
 
 judging_comments["label"] = judging_comments["message"].apply(extract_label)
 
+# Remove the judgment acronyms from the comment text
+def remove_acronyms(text):
+    if pd.isna(text):
+        return text
+    # Remove the specific acronyms while keeping the rest of the text
+    cleaned = re.sub(r"\b(YTA|NTA|ESH|INFO|NAH)\b", "", str(text))
+    # Clean up any extra whitespace created by removal
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
+
+judging_comments["message"] = judging_comments["message"].apply(remove_acronyms)
+
 # Upload the original posts, including submission_id
 submissions = pd.read_sql("SELECT submission_id, title, selftext FROM submission", conn)
 
@@ -72,6 +84,8 @@ if not set(data_df['stance'].astype(str).unique()) <= set(mapping.keys()):
     raise ValueError("label column has values outside {'YTA','ESH','INFO','NAH','NTA'}")
 data_df['stance'] = data_df['stance'].astype(str).replace(mapping)
 
+
+
 # Split train and test sets (stratified)
 train_df, test_df = train_test_split(
     data_df,
@@ -85,4 +99,3 @@ train_df, test_df = train_test_split(
 train_df.to_csv(PREPROCESSED_DIR / "redditAITA_train.csv", index=False)
 test_df.to_csv(PREPROCESSED_DIR / "redditAITA_test.csv", index=False)
 data_df.to_csv(PREPROCESSED_DIR / "redditAITA.csv", index=False)
-
