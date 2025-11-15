@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-ModernBERT Stance Classification with Hyperparameter Tuning
-Optimized for HPC cluster execution with configurable parameters
+ModernBERT-based Stance Classification with Hyperparameter Tuning
+Optimized for HPC cluster execution with configurable data paths
+- Uses Config class
+- Uses 8:2 split for final model training
+- Uses n_warmup_steps=1 for pruning
+- Removed warmup_ratio from tuning
 """
 
 import os
@@ -19,7 +23,7 @@ import pandas as pd
 import torch
 from datasets import Dataset
 from sklearn.metrics import (
-    accuracy_score, f1_score, classification_report, 
+    accuracy_score, f1_score, classification_report,
     confusion_matrix, precision_recall_fscore_support
 )
 from sklearn.model_selection import train_test_split, StratifiedKFold
@@ -30,8 +34,8 @@ from transformers import (
 import optuna
 from optuna.importance import FanovaImportanceEvaluator
 from optuna.visualization.matplotlib import (
-    plot_param_importances, plot_optimization_history, 
-    plot_slice, plot_parallel_coordinate, plot_contour
+    plot_param_importances, plot_optimization_history,
+    plot_slice, plot_parallel_coordinate
 )
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for HPC
@@ -51,8 +55,46 @@ def setup_logging(output_dir):
     )
     return logging.getLogger(__name__)
 
+# Configuration class
+class Config:
+    """Configuration parameters"""
+    def __init__(self, args):
+        # Reproducibility
+        self.SEED = args.seed
+        
+        # Model
+        self.MODEL_NAME = args.model_name
+        
+        # File paths
+        self.TRAIN_PATH = args.train_file
+        self.TEST_PATH = args.test_file
+        self.OUTPUT_DIR = Path(args.output_dir)
+        
+        # Labels
+        self.LABELS = ["concur", "oppose", "neutral"]
+        
+        # Training parameters
+        self.EPOCHS = args.epochs
+        self.LR = args.learning_rate
+        self.BATCH_SIZE = args.batch_size
+        self.MAX_LEN = args.max_len
+        self.GRADIENT_ACCUMULATION_STEPS = args.gradient_accumulation
+        
+        # Optimization parameters
+        self.N_TRIALS = args.n_trials
+        self.CV_SPLITS = args.cv_splits
+        
+        # Hardware & Logging
+        self.NO_FP16 = args.no_fp16
+        self.NO_TENSORBOARD = args.no_tensorboard
+
+        # Derived attributes
+        self.LABEL2ID = {l: i for i, l in enumerate(self.LABELS)}
+        self.ID2LABEL = {i: l for l, i in self.LABEL2ID.items()}
+        self.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
 # Set random seeds for reproducibility
-def set_seeds(seed=42):
+def set_seeds(seed):
     """Set random seeds for reproducibility"""
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -61,10 +103,11 @@ def set_seeds(seed=42):
     torch.backends.cudnn.benchmark = False
 
 # Data loading and preprocessing
-def load_split(path: str, logger):
+def load_split(path: str, config: Config, logger):
     """Load and preprocess data split"""
     logger.info(f"Loading data from {path}")
     
+    # Check if file exists
     if not os.path.exists(path):
         logger.error(f"File not found: {path}")
         sys.exit(1)
@@ -80,7 +123,9 @@ def load_split(path: str, logger):
         logger.error(f"Error loading file {path}: {e}")
         sys.exit(1)
     
-    # Check required columns
+    # Log column names
+    logger.info(f"Columns found: {df.columns.tolist()}")
+    
     required_cols = {"post_text", "comment_text"}
     if not required_cols.issubset(df.columns):
         logger.error(f"{path} must have columns: {required_cols}")
@@ -92,15 +137,19 @@ def load_split(path: str, logger):
     df["comment_text"] = df["comment_text"].astype(str).str.strip()
     
     # Process labels if present
-    label2id = {"concur": 0, "oppose": 1, "neutral": 2}
     if "stance" in df.columns:
         df["stance"] = df["stance"].astype(str).str.lower().str.strip()
+        
+        # Check label distribution before filtering
         logger.info(f"Original label distribution:\n{df['stance'].value_counts().to_dict()}")
         
         # Filter for known labels
-        df = df[df["stance"].isin(label2id.keys())]
-        df["label"] = df["stance"].map(label2id).astype(int)
+        df = df[df["stance"].isin(config.LABEL2ID)]
+        df["label"] = df["stance"].map(config.LABEL2ID).astype(int)
+        
         logger.info(f"Filtered label distribution:\n{df['label'].value_counts().to_dict()}")
+    else:
+        logger.warning(f"No 'stance' column found in {path}. This file can be used for inference only.")
     
     # Remove duplicates
     keep_cols = ["post_text", "comment_text"] + (["label"] if "label" in df.columns else [])
@@ -114,7 +163,7 @@ def load_split(path: str, logger):
     return df
 
 # Dataset creation
-def create_dataset(df: pd.DataFrame, tokenizer, max_len: int, has_labels: bool):
+def create_dataset(df: pd.DataFrame, tokenizer, config: Config, has_labels: bool):
     """Create HuggingFace dataset from dataframe"""
     cols = ["comment_text", "post_text"] + (["label"] if has_labels else [])
     ds = Dataset.from_pandas(df[cols])
@@ -125,12 +174,11 @@ def create_dataset(df: pd.DataFrame, tokenizer, max_len: int, has_labels: bool):
             batch["post_text"],
             padding=True,
             truncation=True,
-            max_length=max_len
+            max_length=config.MAX_LEN
         )
     
     ds = ds.map(tokenize_function, batched=True, remove_columns=["comment_text", "post_text"])
     
-    # ModernBERT may not have token_type_ids
     format_cols = ["input_ids", "attention_mask"]
     if "token_type_ids" in ds.column_names:
         format_cols.append("token_type_ids")
@@ -182,51 +230,47 @@ def compute_metrics(eval_pred):
     }
 
 # Training functions
-def train_baseline(train_df, test_df, args, logger):
+def train_baseline(train_df, test_df, config: Config, logger):
     """Train baseline model"""
-    logger.info("Starting baseline training with ModernBERT...")
-    logger.info(f"Model: {args.model_name}")
-    logger.info(f"Batch size: {args.batch_size}")
-    logger.info(f"Epochs: {args.epochs}")
-    logger.info(f"Max length: {args.max_len}")
+    logger.info("Starting baseline training...")
+    logger.info(f"Model: {config.MODEL_NAME}")
+    logger.info(f"Batch size: {config.BATCH_SIZE}")
+    logger.info(f"Epochs: {config.EPOCHS}")
+    logger.info(f"Max length: {config.MAX_LEN}")
     
     # Split train into train/val
     train, val = train_test_split(
-        train_df, test_size=0.2, random_state=args.seed, stratify=train_df['stance']
+        train_df, test_size=0.2, random_state=config.SEED, stratify=train_df['stance']
     )
+    
     logger.info(f"Train shape: {train.shape}, Val shape: {val.shape}")
     
     # Initialize tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME, use_fast=True)
     
     # Create datasets
-    train_ds = create_dataset(train, tokenizer, args.max_len, has_labels=True)
-    val_ds = create_dataset(val, tokenizer, args.max_len, has_labels=True)
-    test_ds = create_dataset(test_df, tokenizer, args.max_len, has_labels=("label" in test_df.columns))
-    
-    # Label mappings
-    labels = ["concur", "oppose", "neutral"]
-    label2id = {l: i for i, l in enumerate(labels)}
-    id2label = {i: l for l, i in label2id.items()}
+    train_ds = create_dataset(train, tokenizer, config, has_labels=True)
+    val_ds = create_dataset(val, tokenizer, config, has_labels=True)
+    test_ds = create_dataset(test_df, tokenizer, config, has_labels=("label" in test_df.columns))
     
     # Initialize model
     model = AutoModelForSequenceClassification.from_pretrained(
-        args.model_name,
-        num_labels=len(labels),
-        id2label=id2label,
-        label2id=label2id,
-        ignore_mismatched_sizes=True  # For ModernBERT compatibility
+        config.MODEL_NAME,
+        num_labels=len(config.LABELS),
+        id2label=config.ID2LABEL,
+        label2id=config.LABEL2ID,
+        ignore_mismatched_sizes=True # Specific to ModernBERT
     )
     
     # Training arguments
-    output_dir = Path(args.output_dir) / "baseline"
+    output_dir = config.OUTPUT_DIR / "baseline"
     training_args = TrainingArguments(
         output_dir=str(output_dir),
-        learning_rate=args.learning_rate,
-        per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size,
-        gradient_accumulation_steps=args.gradient_accumulation,
-        num_train_epochs=args.epochs,
+        learning_rate=config.LR,
+        per_device_train_batch_size=config.BATCH_SIZE,
+        per_device_eval_batch_size=config.BATCH_SIZE,
+        gradient_accumulation_steps=config.GRADIENT_ACCUMULATION_STEPS,
+        num_train_epochs=config.EPOCHS,
         weight_decay=0.01,
         warmup_ratio=0.1,
         logging_steps=50,
@@ -237,12 +281,12 @@ def train_baseline(train_df, test_df, args, logger):
         metric_for_best_model="f1_macro",
         greater_is_better=True,
         save_total_limit=2,
-        fp16=torch.cuda.is_available() and not args.no_fp16,
+        fp16=torch.cuda.is_available() and not config.NO_FP16,
         dataloader_num_workers=4 if torch.cuda.is_available() else 0,
-        seed=args.seed,
-        report_to=["tensorboard"] if not args.no_tensorboard else [],
+        seed=config.SEED,
+        report_to=["tensorboard"] if not config.NO_TENSORBOARD else [],
         logging_dir=str(output_dir / "logs"),
-        remove_unused_columns=False,  # Important for ModernBERT
+        remove_unused_columns=False # Specific to ModernBERT
     )
     
     # Initialize trainer
@@ -259,92 +303,87 @@ def train_baseline(train_df, test_df, args, logger):
     # Train
     trainer.train()
     
-    # Evaluate on test set
+    # Evaluate
     metrics = trainer.evaluate(test_ds)
     logger.info(f"Baseline test metrics: {metrics}")
     
     # Save results
-    output_dir = Path(args.output_dir)
-    with open(output_dir / "baseline_metrics.json", "w") as f:
+    with open(config.OUTPUT_DIR / "baseline_metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
     
-    # Generate classification report if test has labels
+    # Generate classification report
     if "label" in test_df.columns:
         pred = trainer.predict(test_ds)
         y_pred = pred.predictions.argmax(axis=1)
         y_true = np.array(test_ds["label"])
         
-        report = classification_report(y_true, y_pred, target_names=labels, output_dict=True)
-        with open(output_dir / "baseline_classification_report.json", "w") as f:
+        report = classification_report(y_true, y_pred, target_names=config.LABELS, output_dict=True)
+        with open(config.OUTPUT_DIR / "baseline_classification_report.json", "w") as f:
             json.dump(report, f, indent=2)
         
-        logger.info(f"Classification Report:\n{classification_report(y_true, y_pred, target_names=labels)}")
-        
+        logger.info(f"Classification Report:\n{classification_report(y_true, y_pred, target_names=config.LABELS)}")
+
         # Save confusion matrix
         cm = confusion_matrix(y_true, y_pred)
-        np.save(output_dir / "baseline_confusion_matrix.npy", cm)
+        np.save(config.OUTPUT_DIR / "baseline_confusion_matrix.npy", cm)
         logger.info(f"Confusion Matrix:\n{cm}")
-    
+
     return trainer, tokenizer
 
 # Hyperparameter tuning
-def objective(trial, train_df, args, tokenizer, logger):
+def objective(trial, train_df, config: Config, tokenizer, logger):
     """Optuna objective function for hyperparameter tuning"""
     # Hyperparameter search space
     lr = trial.suggest_float("learning_rate", 5e-6, 5e-4, log=True)
     batch_size = trial.suggest_categorical("batch_size", [8, 16, 32])
     epochs = trial.suggest_int("num_epochs", 2, 5)
     weight_decay = trial.suggest_float("weight_decay", 0.0, 0.1)
-    warmup_ratio = trial.suggest_float("warmup_ratio", 0.0, 0.2)
+    # warmup_ratio is now fixed to 0.1
     
     # Cross-validation
-    skf = StratifiedKFold(n_splits=args.cv_splits, shuffle=True, random_state=args.seed)
+    skf = StratifiedKFold(n_splits=config.CV_SPLITS, shuffle=True, random_state=config.SEED)
     cv_scores = []
     
-    labels = ["concur", "oppose", "neutral"]
-    label2id = {l: i for i, l in enumerate(labels)}
-    id2label = {i: l for l, i in label2id.items()}
-    
     for fold, (train_idx, val_idx) in enumerate(skf.split(train_df, train_df["label"]), 1):
-        logger.info(f"Trial {trial.number}, Fold {fold}/{args.cv_splits}")
+        logger.info(f"Trial {trial.number}, Fold {fold}/{config.CV_SPLITS}")
         
         # Split data
         train_fold_df = train_df.iloc[train_idx].reset_index(drop=True)
         val_fold_df = train_df.iloc[val_idx].reset_index(drop=True)
         
         # Create datasets
-        train_ds = create_dataset(train_fold_df, tokenizer, args.max_len, has_labels=True)
-        val_ds = create_dataset(val_fold_df, tokenizer, args.max_len, has_labels=True)
+        train_ds = create_dataset(train_fold_df, tokenizer, config, has_labels=True)
+        val_ds = create_dataset(val_fold_df, tokenizer, config, has_labels=True)
         
         # Initialize model
         model = AutoModelForSequenceClassification.from_pretrained(
-            args.model_name,
-            num_labels=len(labels),
-            id2label=id2label,
-            label2id=label2id,
-            ignore_mismatched_sizes=True
+            config.MODEL_NAME,
+            num_labels=len(config.LABELS),
+            id2label=config.ID2LABEL,
+            label2id=config.LABEL2ID,
+            ignore_mismatched_sizes=True # Specific to ModernBERT
         )
         
         # Training arguments
-        output_dir = Path(args.output_dir) / f"trial_{trial.number}_fold_{fold}"
+        output_dir = config.OUTPUT_DIR / f"trial_{trial.number}_fold_{fold}"
         training_args = TrainingArguments(
             output_dir=str(output_dir),
             learning_rate=lr,
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size,
-            gradient_accumulation_steps=args.gradient_accumulation,
+            gradient_accumulation_steps=config.GRADIENT_ACCUMULATION_STEPS,
             num_train_epochs=epochs,
             weight_decay=weight_decay,
-            warmup_ratio=warmup_ratio,
+            warmup_ratio=0.1,  # Fixed warmup ratio
             eval_strategy="epoch",
             save_strategy="no",
             logging_steps=50,
-            fp16=torch.cuda.is_available() and not args.no_fp16,
+            fp16=torch.cuda.is_available() and not config.NO_FP16,
             dataloader_num_workers=4 if torch.cuda.is_available() else 0,
-            seed=args.seed,
+            seed=config.SEED,
             report_to=[],
-            disable_tqdm=True,
-            remove_unused_columns=False,
+            disable_tqdm=True,  # Less verbose for trials
+            remove_unused_columns=False # Specific to ModernBERT
         )
         
         # Train
@@ -364,13 +403,13 @@ def objective(trial, train_df, args, tokenizer, logger):
         metrics = trainer.evaluate(val_ds)
         cv_scores.append(metrics["eval_f1_macro"])
         
-        # Report for pruning
+        # Report intermediate value for pruning
         trial.report(metrics["eval_f1_macro"], step=fold)
         if trial.should_prune():
             logger.info(f"Trial {trial.number} pruned at fold {fold}")
             raise optuna.TrialPruned()
         
-        # Clean up
+        # Clean up to save memory
         del model, trainer
         torch.cuda.empty_cache()
     
@@ -380,15 +419,15 @@ def objective(trial, train_df, args, tokenizer, logger):
     
     return mean_f1
 
-def run_hyperparameter_tuning(train_df, args, tokenizer, logger):
+def run_hyperparameter_tuning(train_df, config: Config, tokenizer, logger):
     """Run Optuna hyperparameter tuning"""
     logger.info("Starting hyperparameter tuning...")
-    logger.info(f"Number of trials: {args.n_trials}")
-    logger.info(f"CV splits: {args.cv_splits}")
+    logger.info(f"Number of trials: {config.N_TRIALS}")
+    logger.info(f"CV splits: {config.CV_SPLITS}")
     
     # Create study
-    sampler = optuna.samplers.TPESampler(seed=args.seed)
-    pruner = optuna.pruners.MedianPruner(n_warmup_steps=1)
+    sampler = optuna.samplers.TPESampler(seed=config.SEED)
+    pruner = optuna.pruners.MedianPruner(n_warmup_steps=1) # Set to 1 as requested
     
     study = optuna.create_study(
         direction="maximize",
@@ -399,8 +438,8 @@ def run_hyperparameter_tuning(train_df, args, tokenizer, logger):
     
     # Optimize
     study.optimize(
-        lambda trial: objective(trial, train_df, args, tokenizer, logger),
-        n_trials=args.n_trials,
+        lambda trial: objective(trial, train_df, config, tokenizer, logger),
+        n_trials=config.N_TRIALS,
         show_progress_bar=True
     )
     
@@ -409,68 +448,65 @@ def run_hyperparameter_tuning(train_df, args, tokenizer, logger):
     logger.info(f"Best parameters: {study.best_params}")
     
     # Save trials dataframe
-    output_dir = Path(args.output_dir)
     trials_df = study.trials_dataframe()
-    trials_df.to_csv(output_dir / "optuna_trials.csv", index=False)
+    trials_df.to_csv(config.OUTPUT_DIR / "optuna_trials.csv", index=False)
     
     # Save best parameters
-    with open(output_dir / "best_params.json", "w") as f:
+    with open(config.OUTPUT_DIR / "best_params.json", "w") as f:
         json.dump(study.best_params, f, indent=2)
     
     return study
 
-def train_final_model(train_df, test_df, best_params, args, tokenizer, logger):
-    """Train final model with best hyperparameters"""
+def train_final_model(train_df, test_df, best_params, config: Config, tokenizer, logger):
+    """Train final model with best hyperparameters on 80/20 split"""
     logger.info("Training final model with best parameters...")
     logger.info(f"Best parameters: {best_params}")
-    
-    # Split for validation during final training
+
+    # Split train_df into 80% train and 20% validation
     train, val = train_test_split(
-        train_df, test_size=0.2, random_state=args.seed, stratify=train_df['stance']
+        train_df, test_size=0.2, random_state=config.SEED, stratify=train_df['stance']
     )
-    
-    # Create datasets  
-    train_ds = create_dataset(train, tokenizer, args.max_len, has_labels=True)
-    val_ds = create_dataset(val, tokenizer, args.max_len, has_labels=True)
-    test_ds = create_dataset(test_df, tokenizer, args.max_len, has_labels=("label" in test_df.columns))
-    
-    labels = ["concur", "oppose", "neutral"]
-    label2id = {l: i for i, l in enumerate(labels)}
-    id2label = {i: l for l, i in label2id.items()}
+    logger.info(f"Final training set size: {len(train)}")
+    logger.info(f"Final validation set size: {len(val)}")
+
+    # Create datasets
+    train_ds = create_dataset(train, tokenizer, config, has_labels=True)
+    val_ds = create_dataset(val, tokenizer, config, has_labels=True)
+    test_ds = create_dataset(test_df, tokenizer, config, has_labels=("label" in test_df.columns))
     
     # Initialize model
     model = AutoModelForSequenceClassification.from_pretrained(
-        args.model_name,
-        num_labels=len(labels),
-        id2label=id2label,
-        label2id=label2id,
-        ignore_mismatched_sizes=True
+        config.MODEL_NAME,
+        num_labels=len(config.LABELS),
+        id2label=config.ID2LABEL,
+        label2id=config.LABEL2ID,
+        ignore_mismatched_sizes=True # Specific to ModernBERT
     )
     
     # Training arguments with best parameters
-    output_dir = Path(args.output_dir) / "final_model"
+    output_dir = config.OUTPUT_DIR / "final_model"
     training_args = TrainingArguments(
         output_dir=str(output_dir),
-        learning_rate=best_params.get("learning_rate", args.learning_rate),
-        per_device_train_batch_size=best_params.get("batch_size", args.batch_size),
-        per_device_eval_batch_size=best_params.get("batch_size", args.batch_size),
-        gradient_accumulation_steps=args.gradient_accumulation,
-        num_train_epochs=best_params.get("num_epochs", args.epochs),
+        learning_rate=best_params.get("learning_rate", config.LR),
+        per_device_train_batch_size=best_params.get("batch_size", config.BATCH_SIZE),
+        per_device_eval_batch_size=best_params.get("batch_size", config.BATCH_SIZE),
+        gradient_accumulation_steps=config.GRADIENT_ACCUMULATION_STEPS,
+        num_train_epochs=best_params.get("num_epochs", config.EPOCHS),
         weight_decay=best_params.get("weight_decay", 0.01),
-        warmup_ratio=best_params.get("warmup_ratio", 0.1),
+        warmup_ratio=0.1,  # Fixed warmup ratio
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="f1_macro",
         greater_is_better=True,
         save_total_limit=2,
-        fp16=torch.cuda.is_available() and not args.no_fp16,
+        fp16=torch.cuda.is_available() and not config.NO_FP16,
         dataloader_num_workers=4 if torch.cuda.is_available() else 0,
         logging_steps=50,
-        seed=args.seed,
-        report_to=["tensorboard"] if not args.no_tensorboard else [],
-        logging_dir=str(output_dir / "logs"),
-        remove_unused_columns=False,
+        seed=config.SEED,
+        report_to=["tensorboard"] if not config.NO_TENSORBOARD else [],
+        logging_dir=str(output_dir / "logs" / "final"),
+        remove_unused_columns=False # Specific to ModernBERT
     )
     
     # Train
@@ -478,7 +514,7 @@ def train_final_model(train_df, test_df, best_params, args, tokenizer, logger):
         model=model,
         args=training_args,
         train_dataset=train_ds,
-        eval_dataset=val_ds,
+        eval_dataset=val_ds,  # Use 20% validation set for early stopping
         tokenizer=tokenizer,
         data_collator=DataCollatorWithPadding(tokenizer, padding=True),
         compute_metrics=compute_metrics
@@ -491,8 +527,7 @@ def train_final_model(train_df, test_df, best_params, args, tokenizer, logger):
         metrics = trainer.evaluate(test_ds)
         logger.info(f"Final test metrics: {metrics}")
         
-        output_dir = Path(args.output_dir)
-        with open(output_dir / "final_metrics.json", "w") as f:
+        with open(config.OUTPUT_DIR / "final_metrics.json", "w") as f:
             json.dump(metrics, f, indent=2)
         
         # Generate predictions
@@ -501,15 +536,15 @@ def train_final_model(train_df, test_df, best_params, args, tokenizer, logger):
         y_true = np.array(test_ds["label"])
         
         # Save classification report
-        report = classification_report(y_true, y_pred, target_names=labels, output_dict=True)
-        with open(output_dir / "final_classification_report.json", "w") as f:
+        report = classification_report(y_true, y_pred, target_names=config.LABELS, output_dict=True)
+        with open(config.OUTPUT_DIR / "final_classification_report.json", "w") as f:
             json.dump(report, f, indent=2)
         
         # Save confusion matrix
         cm = confusion_matrix(y_true, y_pred)
-        np.save(output_dir / "final_confusion_matrix.npy", cm)
+        np.save(config.OUTPUT_DIR / "final_confusion_matrix.npy", cm)
         
-        logger.info(f"Classification Report:\n{classification_report(y_true, y_pred, target_names=labels)}")
+        logger.info(f"Classification Report:\n{classification_report(y_true, y_pred, target_names=config.LABELS)}")
         logger.info(f"Confusion Matrix:\n{cm}")
     
     # Save model
@@ -518,7 +553,7 @@ def train_final_model(train_df, test_df, best_params, args, tokenizer, logger):
     
     return trainer
 
-def visualize_results(study, output_dir, logger):
+def visualize_results(study, config: Config, logger):
     """Generate visualization plots for Optuna study"""
     logger.info("Generating visualization plots...")
     
@@ -531,34 +566,45 @@ def visualize_results(study, output_dir, logger):
         for k, v in imp.items():
             logger.info(f"{k:30s} {v:.3f}")
         
-        # Generate plots
+        # --- Plot 1: Param Importances (Returns single Axes) ---
         ax = plot_param_importances(study)
-        ax.figure.savefig(output_dir / "param_importances.png", dpi=200, bbox_inches="tight")
-        plt.close()
-        
+        ax.figure.suptitle("Hyperparameter Importance")
+        ax.figure.savefig(config.OUTPUT_DIR / "param_importances.png", dpi=200, bbox_inches="tight")
+        plt.close(ax.figure)
+
+        # --- Plot 2: Optimization History (Returns single Axes) ---
         ax = plot_optimization_history(study)
-        ax.figure.savefig(output_dir / "optimization_history.png", dpi=200, bbox_inches="tight")
-        plt.close()
+        ax.figure.suptitle("Optimization History")
+        ax.figure.savefig(config.OUTPUT_DIR / "optimization_history.png", dpi=200, bbox_inches="tight")
+        plt.close(ax.figure)
         
-        # Parameter slices
-        axes = plot_slice(study)
-        if axes:
-            fig = axes[0].figure
+        # Check if there are parameters to plot
+        if len(study.best_params) > 0:
+            
+            # --- Plot 3: Slices (Returns np.ndarray of Axes) ---
+            # THIS IS THE FIX:
+            # 1. Get the array of Axes objects
+            axes_array = plot_slice(study)
+            # 2. Get the parent figure from the *first* Axes in the array
+            fig = axes_array.flat[0].figure 
+            
             fig.suptitle("Parameter Performance Slices")
-            fig.savefig(output_dir / "param_slices.png", dpi=200, bbox_inches="tight")
-            plt.close()
-        
-        # Parallel coordinates
-        ax = plot_parallel_coordinate(study)
-        fig = ax.figure
-        fig.suptitle("Parameter Interactions")
-        fig.savefig(output_dir / "parallel_coordinates.png", dpi=200, bbox_inches="tight")
-        plt.close()
-        
+            fig.savefig(config.OUTPUT_DIR / "param_slices.png", dpi=200, bbox_inches="tight")
+            plt.close(fig)
+            
+            # --- Plot 4: Parallel Coordinate (Returns single Axes) ---
+            ax = plot_parallel_coordinate(study)
+            ax.figure.suptitle("Parameter Interactions")
+            ax.figure.savefig(config.OUTPUT_DIR / "parallel_coordinates.png", dpi=200, bbox_inches="tight")
+            plt.close(ax.figure)
+        else:
+            logger.warning("Skipping slice and parallel coordinate plots, not enough data.")
+
         logger.info("Visualizations saved successfully")
         
     except Exception as e:
-        logger.warning(f"Error generating visualizations: {e}")
+        # Added exc_info=True for better debugging
+        logger.warning(f"Error generating visualizations: {e}", exc_info=True)
 
 def parse_arguments():
     """Parse command-line arguments"""
@@ -572,29 +618,29 @@ def parse_arguments():
     
     # Output
     parser.add_argument('--output-dir', type=str, default='./output_modernbert',
-                        help='Directory for saving outputs')
+                        help='Directory for saving outputs (default: ./output_modernbert)')
     
     # Model parameters
     parser.add_argument('--model-name', type=str, default='answerdotai/ModernBERT-base',
-                        help='Pretrained model name')
+                        help='Pretrained model name (default: answerdotai/ModernBERT-base)')
     parser.add_argument('--max-len', type=int, default=128,
-                        help='Maximum sequence length')
+                        help='Maximum sequence length (default: 128)')
     
     # Training parameters
     parser.add_argument('--batch-size', type=int, default=16,
-                        help='Batch size for training')
+                        help='Batch size for training (default: 16)')
     parser.add_argument('--epochs', type=int, default=3,
-                        help='Number of training epochs')
+                        help='Number of training epochs (default: 3)')
     parser.add_argument('--learning-rate', type=float, default=2e-5,
-                        help='Initial learning rate')
+                        help='Initial learning rate (default: 2e-5)')
     parser.add_argument('--gradient-accumulation', type=int, default=2,
-                        help='Gradient accumulation steps')
-    
+                        help='Gradient accumulation steps (default: 2)')
+
     # Optimization parameters
-    parser.add_argument('--n-trials', type=int, default=10,
-                        help='Number of Optuna trials')
-    parser.add_argument('--cv-splits', type=int, default=2,
-                        help='Number of CV splits')
+    parser.add_argument('--n-trials', type=int, default=20,
+                        help='Number of Optuna trials (default: 20)')
+    parser.add_argument('--cv-splits', type=int, default=3,
+                        help='Number of CV splits (default: 3)')
     
     # Execution control
     parser.add_argument('--skip-baseline', action='store_true',
@@ -603,10 +649,10 @@ def parse_arguments():
                         help='Skip hyperparameter tuning')
     parser.add_argument('--skip-final', action='store_true',
                         help='Skip final model training')
-    
+
     # Other options
     parser.add_argument('--seed', type=int, default=42,
-                        help='Random seed')
+                        help='Random seed (default: 42)')
     parser.add_argument('--no-fp16', action='store_true',
                         help='Disable mixed precision training')
     parser.add_argument('--no-tensorboard', action='store_true',
@@ -619,17 +665,17 @@ def main():
     # Parse arguments
     args = parse_arguments()
     
-    # Create output directory
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Initialize configuration
+    config = Config(args)
     
     # Setup logging
-    logger = setup_logging(output_dir)
-    logger.info("Starting ModernBERT stance classification training")
-    logger.info(f"Arguments: {vars(args)}")
+    logger = setup_logging(config.OUTPUT_DIR)
+    logger.info("Starting stance classification training pipeline")
+    logger.info(f"Command-line arguments: {vars(args)}")
+    logger.info(f"Configuration: {vars(config)}")
     
     # Set seeds
-    set_seeds(args.seed)
+    set_seeds(config.SEED)
     
     # Check GPU availability
     if torch.cuda.is_available():
@@ -640,8 +686,8 @@ def main():
     
     try:
         # Load data
-        train_df = load_split(args.train_file, logger)
-        test_df = load_split(args.test_file, logger)
+        train_df = load_split(config.TRAIN_PATH, config, logger)
+        test_df = load_split(config.TEST_PATH, config, logger)
         
         # Verify labels exist in training data
         if "label" not in train_df.columns:
@@ -653,40 +699,41 @@ def main():
         
         # Train baseline model
         if not args.skip_baseline:
-            trainer, tokenizer = train_baseline(train_df, test_df, args, logger)
+            trainer, tokenizer = train_baseline(train_df, test_df, config, logger)
         else:
             logger.info("Skipping baseline training as requested")
-            tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=True)
+            # Still need to initialize tokenizer
+            tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME, use_fast=True)
         
         # Run hyperparameter tuning
         if not args.skip_tuning:
             if tokenizer is None:
-                tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=True)
-            study = run_hyperparameter_tuning(train_df, args, tokenizer, logger)
+                tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME, use_fast=True)
+            study = run_hyperparameter_tuning(train_df, config, tokenizer, logger)
             best_params = study.best_params
         else:
             logger.info("Skipping hyperparameter tuning as requested")
+            # Use default parameters
             best_params = {
-                "learning_rate": args.learning_rate,
-                "batch_size": args.batch_size,
-                "num_epochs": args.epochs,
-                "weight_decay": 0.01,
-                "warmup_ratio": 0.1
+                "learning_rate": config.LR,
+                "batch_size": config.BATCH_SIZE,
+                "num_epochs": config.EPOCHS,
+                "weight_decay": 0.01
             }
         
-        # Train final model
+        # Train final model with best parameters
         if not args.skip_final:
             if tokenizer is None:
-                tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=True)
+                tokenizer = AutoTokenizer.from_pretrained(config.MODEL_NAME, use_fast=True)
             final_trainer = train_final_model(
-                train_df, test_df, best_params, args, tokenizer, logger
+                train_df, test_df, best_params, config, tokenizer, logger
             )
         else:
             logger.info("Skipping final model training as requested")
         
         # Generate visualizations
         if study is not None:
-            visualize_results(study, output_dir, logger)
+            visualize_results(study, config, logger)
         
         logger.info("Training pipeline completed successfully")
         
