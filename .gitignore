@@ -52,3 +52,5 @@ logs/
 local_settings.py
 classification_requirements.txt
 environment.yml
+drop_blanks.py
+json_blanks.py
