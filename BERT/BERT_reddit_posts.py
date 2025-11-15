@@ -14,8 +14,8 @@ torch.manual_seed(SEED); np.random.seed(SEED)
 MODEL_NAME = "bert-base-uncased"
 
 # File paths (put your CSVs in the same folder)
-TRAIN_PATH = "data/reddit_posts_and_comments_train.csv"
-TEST_PATH  = "data/reddit_posts_and_comments_test.csv"
+TRAIN_PATH = "/home/jzong002/EE6405_Final_Project/data/redditAITA_train.csv"
+TEST_PATH  = "/home/jzong002/EE6405_Final_Project/data/redditAITA_test.csv"
 
 # Labels in your preprocessed data  (edit if required)
 LABELS   = ["concur","oppose","neutral"]

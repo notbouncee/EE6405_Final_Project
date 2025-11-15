@@ -50,3 +50,8 @@ logs/
 
 # Local overrides
 local_settings.py
+
+/data
+
+*.pt
+*.safetensors
