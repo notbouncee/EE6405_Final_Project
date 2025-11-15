@@ -490,4 +490,3 @@ Examples:
 
 if __name__ == "__main__":
     main()
-    print(precision_recall_fscore_support)
