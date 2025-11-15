@@ -326,15 +326,29 @@ print("Param importances:")
 for k, v in imp.items():
     print(f"{k:28s} {v:.3f}")
 
-fig = plot_param_importances(study); fig.suptitle("Hyperparameter Importance"); fig.savefig("param_importances.png", dpi=200, bbox_inches="tight")
-fig = plot_optimization_history(study); fig.suptitle("Optimization History"); fig.savefig("opt_history.png", dpi=200, bbox_inches="tight")
+ax = plot_param_importances(study)
+ax.figure.savefig("param_importances.png", dpi=200, bbox_inches="tight")
+
+ax = plot_optimization_history(study)
+ax.figure.savefig("opt_history.png", dpi=200, bbox_inches="tight")
 
 # 2) Per-parameter response (effect on score across all trials)
-fig = plot_slice(study); fig.suptitle("Per-Parameter Performance Slices"); fig.savefig("param_slices.png", dpi=200, bbox_inches="tight")
+axes = plot_slice(study)
+
+fig = axes[0].figure
+fig.suptitle("Per-Parameter Performance Slices")
+fig.savefig("param_slices.png", dpi=200, bbox_inches="tight")
 
 # 3) Interactions
-fig = plot_parallel_coordinate(study); fig.suptitle("Parameter Interactions"); fig.savefig("parallel_coords.png", dpi=200, bbox_inches="tight")
-fig = plot_contour(study); fig.suptitle("Pairwise Contours"); fig.savefig("contours.png", dpi=200, bbox_inches="tight")
+ax = plot_parallel_coordinate(study)
+fig = ax.figure
+fig.suptitle("Parameter Interactions")
+fig.savefig("parallel_coords.png", dpi=200, bbox_inches="tight")
+
+axes_contour = plot_contour(study)
+fig = axes_contour[0, 0].figure
+fig.suptitle("Pairwise Contours")
+fig.savefig("contours.png", dpi=200, bbox_inches="tight")
 
 
 ## Custom plots per parameter
