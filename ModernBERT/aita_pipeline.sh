@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH -p A5000
-#SBATCH --job-name=stance_bert_train
-#SBATCH --output=logs/slurm-%j.out
-#SBATCH --error=logs/slurm-%j.err
+#SBATCH --job-name=reddit_modern_train
+#SBATCH --output=logs/reddit_modern_train-%j.out
+#SBATCH --error=logs/reddit_modern_train-%j.err
 #SBATCH --time=24:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -38,7 +38,6 @@ echo "GPU Information:"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 echo "========================================="
 
-
 # Print package versions
 echo "========================================="
 echo "Package Versions:"
@@ -48,26 +47,24 @@ python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 python -c "import torch; print(f'CUDA version: {torch.version.cuda if torch.cuda.is_available() else None}')"
 echo "========================================="
 
-# Data file paths - CHANGE THESE TO YOUR FILE PATHS
 TRAIN_FILE="/home/jzong002/EE6405_Final_Project/data/redditAITA_train_cleaned.csv"
 TEST_FILE="/home/jzong002/EE6405_Final_Project/data/redditAITA_test_cleaned.csv"
+OUTPUT_DIR="./output_modernbert"
+BATCH_SIZE=16
+MAX_LEN=128
+N_TRIALS=10
+CV_SPLITS=2
+GRAD_ACCUM=2
+SEED=42
+SUBMIT_SLURM=false
+INTERACTIVE=false
+DRY_RUN=false
+SKIP_BASELINE=""
+SKIP_TUNING=""
+SKIP_FINAL=""
+NO_FP16=""
 
-# Output directory for results
-OUTPUT_DIR="output/aita"
-
-# Model configuration
-MODEL_NAME="bert-base-uncased"  # Options: bert-base-uncased, roberta-base, albert-base-v2, distilbert-base-uncased
-MAX_LEN=512                      # Maximum sequence length
-
-# Training configuration
-BATCH_SIZE=16                    # Training batch size
-EPOCHS=3                         # Number of training epochs
-
-# Hyperparameter optimization
-N_TRIALS=20                      # Number of Optuna trials (increase for better optimization)
-CV_SPLITS=3                      # Number of cross-validation splits
-
-PYTHON_CMD="python modernbert_train.py"
+PYTHON_CMD="python ModernBERT_train.py"
 PYTHON_CMD="$PYTHON_CMD --train-file $TRAIN_FILE"
 PYTHON_CMD="$PYTHON_CMD --test-file $TEST_FILE"
 PYTHON_CMD="$PYTHON_CMD --output-dir $OUTPUT_DIR"
@@ -82,9 +79,9 @@ PYTHON_CMD="$PYTHON_CMD $SKIP_BASELINE $SKIP_TUNING $SKIP_FINAL $NO_FP16"
 # Run the training script
 echo "========================================="
 echo "Starting training with command:"
-echo "${CMD}"
+echo "${PYTHON_CMD}"
 echo "========================================="
-${CMD}
+${PYTHON_CMD}
 
 # Print resource usage statistics
 echo "========================================="

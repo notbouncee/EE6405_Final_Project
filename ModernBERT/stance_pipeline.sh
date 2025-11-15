@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH -p A5000
-#SBATCH --job-name=stance_bert_train
-#SBATCH --output=logs/slurm-%j.out
-#SBATCH --error=logs/slurm-%j.err
+#SBATCH --job-name=stance_modernbert_train
+#SBATCH --output=logs/stance_modernbert-%j.out
+#SBATCH --error=logs/stance_modernbert-%j.err
 #SBATCH --time=24:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
