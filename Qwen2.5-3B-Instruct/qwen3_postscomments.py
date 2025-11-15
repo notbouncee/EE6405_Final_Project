@@ -14,7 +14,7 @@ print("=" * 80)
 # CLI options for quick runs
 # ---------------------------
 parser = argparse.ArgumentParser(description="Run Qwen3 post/comment processing (with optional dry-run)")
-parser.add_argument("--csv", type=str, default=r"D:\Quang Huy\Documents\EE6405\Project\EE6405_Final_Project\data\preprocessed\combined_preprocessed_for_qwen.csv", help="Path to CSV file to process (default: combined preprocessed data)")
+parser.add_argument("--csv", type=str, default=r"D:\Quang Huy\Documents\EE6405\Project\EE6405_Final_Project\data\preprocessed\reddit_posts_and_comments.csv", help="Path to CSV file to process (default: combined preprocessed data)")
 parser.add_argument("--nrows", type=int, default=5, help="Number of rows to read and process (default: 5). Use 0 to read all rows.")
 parser.add_argument("--no-model", action="store_true", help="Do not load the Qwen model; useful for fast CSV parsing/dry-runs.")
 args = parser.parse_args()
