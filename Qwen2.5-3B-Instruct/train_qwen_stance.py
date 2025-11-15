@@ -79,6 +79,12 @@ parser.add_argument(
     default=0,
     help="Max rows to use from CSV (0 = all, default: 0)"
 )
+parser.add_argument(
+    "--model_name_or_path",
+    type=str,
+    default="Qwen/Qwen2.5-1.5B-Instruct",
+    help="Model name or path (default: Qwen/Qwen2.5-3B-Instruct). Examples: Qwen/Qwen2.5-0.5B-Instruct, Qwen/Qwen2.5-1.5B-Instruct"
+)
 
 args = parser.parse_args()
 
@@ -133,7 +139,7 @@ except Exception as e:
     exit(1)
 
 # --- 2. Define Model and Tokenizer ---
-MODEL_CHECKPOINT = "Qwen/Qwen2.5-3B-Instruct"
+MODEL_CHECKPOINT = args.model_name_or_path
 
 print(f"\n{'='*80}")
 print(f"Loading Model: {MODEL_CHECKPOINT}")
@@ -306,6 +312,7 @@ training_args = TrainingArguments(
 )
 
 print(f"\nTraining Configuration:")
+print(f"  Model: {args.model_name_or_path}")
 print(f"  CSV: {csv_file_path}")
 print(f"  Output Dir: {output_dir}")
 print(f"  Epochs: {args.epochs}")
