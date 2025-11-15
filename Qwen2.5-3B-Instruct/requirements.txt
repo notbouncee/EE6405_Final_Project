@@ -3,6 +3,12 @@
 pandas>=2.3.3,<3.0
 numpy>=2.3.4,<3.0
 scikit-learn>=1.7.2,<2.0
+transformers>=4.36.0
+torch>=2.0.0
+datasets>=2.14.0
+evaluate>=0.4.0
+optuna>=3.0.0
+wandb>=0.15.0
 
 # Only if your Python build lacks the stdlib sqlite3 module:
 # pysqlite3-binary>=0.5.3
