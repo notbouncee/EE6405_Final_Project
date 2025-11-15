@@ -283,6 +283,12 @@ study = optuna.create_study(
 # --- 7. Model Initialization Function ---
 def model_init(trial=None):
     """Initialize model for each trial."""
+    """Initialize model for each trial and free GPU memory."""
+    # Free GPU memory from previous model
+    if 'trainer' in globals() and hasattr(trainer, "model"):
+        del trainer.model
+        torch.cuda.empty_cache()
+
     model = AutoModelForSequenceClassification.from_pretrained(
         MODEL_CHECKPOINT,
         num_labels=num_labels,
