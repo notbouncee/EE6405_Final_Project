@@ -1,6 +1,6 @@
 """
 Inference script for trained Qwen stance detection model
-Updated version with flexible CLI arguments for model path and CSV input
+Updated version with flexible arguments for model path and CSV input
 """
 
 import torch
@@ -490,3 +490,4 @@ Examples:
 
 if __name__ == "__main__":
     main()
+    print(precision_recall_fscore_support)
