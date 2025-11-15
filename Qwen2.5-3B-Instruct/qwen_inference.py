@@ -20,7 +20,7 @@ import seaborn as sns
 from tqdm import tqdm
 
 class StancePredictor:
-    def __init__(self, model_path="/opt/tiger/MLLM_AUTO_EVALUATE_PIPELINE/EE6405_Final_Project/results_qwen/run-4/checkpoint-1800"):
+    def __init__(self, model_path="./results/qwen_model/final_model"):
         """
         Initialize the stance predictor.
         
@@ -480,7 +480,7 @@ def main():
     parser.add_argument(
         "--test_data",
         type=str,
-        default="/Users/bytedance/Downloads/qhuy/EE6405_Final_Project/data/preprocessed/redditAITA_test.csv",
+        default="./data/preprocessed/reddit_posts_and_comments_test.csv",
         help="Path to test CSV file (for --test mode)"
     )
     parser.add_argument(
