@@ -153,13 +153,13 @@ trainer = Trainer(
 
 trainer.train()
 
-metrics = trainer.evaluate(val_ds)
+metrics = trainer.evaluate(test_ds)
 print(metrics)
 
 # Show classification report
-pred = trainer.predict(val_ds)
+pred = trainer.predict(test_ds)
 y_pred = pred.predictions.argmax(axis=1)
-y_true = np.array(val_ds["label"])
+y_true = np.array(test_ds["label"])
 
 print(classification_report(y_true, y_pred, target_names=LABELS))
 print(confusion_matrix(y_true, y_pred))
@@ -239,8 +239,6 @@ trials_df.head()
 ## Train final model with best hyperparameters
 best_params = study.best_params
 
-full_test_ds  = make_ds(test,  has_labels=("label" in test.columns))
-
 final_args = TrainingArguments(
     output_dir="./final_cv_best",
     learning_rate=best_params["learning_rate"],
@@ -269,7 +267,7 @@ final_trainer = Trainer(
 )
 
 final_trainer.train()
-final_metrics = final_trainer.evaluate(full_test_ds)
+final_metrics = final_trainer.evaluate(test_ds)
 print(final_metrics)
 
 
