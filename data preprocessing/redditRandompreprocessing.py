@@ -10,15 +10,15 @@ PREPROCESSED_DIR = ROOT / "data" / "preprocessed"
 PREPROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# 1) Read the CSV file -> DataFrame
+# 1) Read the CSV file into DataFrame
 data_df = pd.read_csv(DB_PATH)
 
-# 2) Inspect
+# 2) Inspect data
 print(data_df.shape)
 print(data_df.columns.tolist())
 print(data_df.head())
 
-# Normalize column names (handles accidental leading/trailing spaces)
+# Normalise column names 
 data_df.columns = data_df.columns.str.strip()
 
 data_df = data_df.drop(columns=["post_title","subreddit","post_author","post_url","post_upvotes","post_downvotes","comment_upvotes","comment_downvotes","comment_author","model_confidence"])
@@ -31,7 +31,7 @@ if col not in data_df.columns:
 data_df = data_df[data_df[col].notna() & data_df[col].astype(str).str.strip().ne("")].copy()
 
 
-# Split train and test sets (stratified)
+# Split train and test sets
 train_df, test_df = train_test_split(
     data_df,
     test_size=0.2,

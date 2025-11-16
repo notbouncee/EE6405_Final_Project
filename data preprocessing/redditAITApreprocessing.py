@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 
-# Project-root relative paths (place the DB at repo-root/data/raw/AmItheAsshole.sqlite)
+
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "data" / "raw" / "AmItheAsshole.sqlite"
 PREPROCESSED_DIR = ROOT / "data" / "preprocessed"
@@ -54,10 +54,10 @@ def remove_acronyms(text):
 
 judging_comments["message"] = judging_comments["message"].apply(remove_acronyms)
 
-# Upload the original posts, including submission_id
+
 submissions = pd.read_sql("SELECT submission_id, title, selftext FROM submission", conn)
 
-# keep all submissions, attach any matching comment rows (may produce multiple rows per submission)
+# keep all submissions, attach any matching comment rows
 merged = pd.merge(submissions,
                   judging_comments,
                   on="submission_id",
@@ -86,7 +86,7 @@ data_df['stance'] = data_df['stance'].astype(str).replace(mapping)
 
 
 
-# Split train and test sets (stratified)
+# Split train and test sets
 train_df, test_df = train_test_split(
     data_df,
     test_size=0.2,
@@ -95,7 +95,7 @@ train_df, test_df = train_test_split(
     )
 
 
-# Save to CSV (write into project-relative data/preprocessed directory)
+# Save to CSV
 train_df.to_csv(PREPROCESSED_DIR / "redditAITA_train.csv", index=False)
 test_df.to_csv(PREPROCESSED_DIR / "redditAITA_test.csv", index=False)
 data_df.to_csv(PREPROCESSED_DIR / "redditAITA.csv", index=False)

@@ -2,12 +2,12 @@ import pandas as pd
 import re
 from pathlib import Path
 
-# Setup paths
+
 ROOT = Path(__file__).resolve().parent
 INPUT_DIR = ROOT / "data" / "preprocessed"
 OUTPUT_DIR = ROOT / "data" / "preprocessed"
 
-# Remove the judgment acronyms from the comment text
+# Remove the stance acronyms from the comment text
 def remove_acronyms(text):
     if pd.isna(text):
         return text
@@ -30,18 +30,18 @@ for filename in ["redditAITA_train.csv", "redditAITA_test.csv"]:
     if 'comment_text' in df.columns and len(df) > 0:
         print(df['comment_text'].iloc[0][:200])
     
-    # Apply the cleaning function to the comment_text column
+
     if 'comment_text' in df.columns:
         df['comment_text'] = df['comment_text'].apply(remove_acronyms)
         
-        # Show sample after cleaning
+
         print(f"\nSample comment after cleaning:")
         print(df['comment_text'].iloc[0][:200])
     else:
         print("Warning: 'comment_text' column not found in the dataframe")
         print(f"Available columns: {df.columns.tolist()}")
     
-    # Save to new file with "_cleaned" suffix
+    # Save as new files
     output_filename = filename.replace(".csv", "_cleaned.csv")
     output_path = OUTPUT_DIR / output_filename
     df.to_csv(output_path, index=False)

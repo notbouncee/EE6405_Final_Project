@@ -10,7 +10,7 @@ PREPROCESSED_DIR = ROOT / "data" / "preprocessed"
 PREPROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# 1) Read the JSONL file -> DataFrame
+# 1) Read the JSONL file into DataFrame
 data_df = pd.read_json(DB_PATH, lines=True)
 
 # 2) Parse any *_created_at columns as datetimes
@@ -18,7 +18,7 @@ date_cols = [c for c in data_df.columns if c.lower().endswith("created_at")]
 for col in date_cols:
     data_df[col] = pd.to_datetime(data_df[col], errors="coerce", utc=True)
 
-# 3) Inspect
+# 3) Inspect data
 print(data_df.shape)
 print(data_df.columns.tolist())
 print(data_df.head())
@@ -33,47 +33,25 @@ def relabel_values(df: pd.DataFrame,
                    *,
                    inplace: bool = True,
                    case_sensitive: bool = True) -> pd.Series | None:
-    """
-    Relabel values in df[col].
 
-    Parameters
-    ----------
-    df : DataFrame
-    col : str
-        Column name to relabel.
-    mapping : dict or callable
-        - dict: {old_value: new_value}. Unspecified values stay unchanged.
-        - callable: function(old_value) -> new_value_or_None; if None, keep original.
-    inplace : bool, default True
-        If True, write changes into df[col] and return None; otherwise return a Series.
-    case_sensitive : bool, default True
-        Relevant only when mapping is a dict of string keys. If False, match ignoring case.
-
-    Returns
-    -------
-    Series | None
-        New column if inplace=False, else None.
-    """
     s = df[col]
 
-    # Case 1: dict mapping (exact replacements)
+    # Case 1: dict mapping 
     if isinstance(mapping, dict):
         if case_sensitive:
             new_s = s.replace(mapping)
         else:
-            # case-insensitive: normalize keys and the series to lower for matching
+            # Normalise keys and the series to lower for matching
             s_as_str = s.astype(str)
             lower_map = {str(k).lower(): v for k, v in mapping.items()}
-            # Map lowercased values, keep originals when not matched
+            # Map lowercased values
             mapped = s_as_str.str.lower().map(lower_map)
-            # If a value didn't map, fall back to original
             # Preserve original dtype if possible
             new_s = pd.Series(pd.NA, index=s.index, dtype="object")
             new_s[:] = s_as_str
             new_s = mapped.where(mapped.notna(), new_s)
     else:
         # Case 2: callable mapping
-        # Apply; keep original on None
         mapped = s.map(mapping)
         new_s = mapped.where(mapped.notna(), s)
 
