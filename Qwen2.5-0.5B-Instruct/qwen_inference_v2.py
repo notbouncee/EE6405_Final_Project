@@ -1,8 +1,3 @@
-"""
-Inference script for trained Qwen stance detection model
-Updated version with flexible arguments for model path and CSV input
-"""
-
 import torch
 import json
 import pandas as pd
@@ -22,12 +17,8 @@ from tqdm import tqdm
 
 class StancePredictor:
     def __init__(self, model_path):
-        """
-        Initialize the stance predictor.
-        
-        Args:
-            model_path: Path to the trained model directory
-        """
+        # Initialize the stance predictor.
+
         print("=" * 80)
         print("Qwen Stance Detection - Inference")
         print("=" * 80)
@@ -64,13 +55,11 @@ class StancePredictor:
                 self.id2label = {int(k): v for k, v in mappings['id2label'].items()}
         else:
             # Fallback: Extract from model config
-            print("\n⚠ Warning: label_mappings.json not found. Extracting from config...")
+            print("\nWarning: label_mappings.json not found. Extracting from config...")
             if hasattr(self.model.config, 'label2id') and hasattr(self.model.config, 'id2label'):
                 self.label2id = self.model.config.label2id
                 self.id2label = {int(k): v for k, v in self.model.config.id2label.items()}
                 print(f"✓ Extracted label mappings from config: {list(self.label2id.keys())}")
-                
-                # Optionally save it for next time
                 try:
                     with open(label_mappings_path, 'w') as f:
                         json.dump({
@@ -108,18 +97,6 @@ Stance:"""
         return prompt
     
     def predict(self, post, comment, return_probabilities=False):
-        """
-        Predict stance for a single post-comment pair.
-        
-        Args:
-            post: Post text
-            comment: Comment text
-            return_probabilities: If True, return probabilities for all classes
-            
-        Returns:
-            If return_probabilities=False: predicted label (str)
-            If return_probabilities=True: dict with label and probabilities
-        """
         # Create prompt
         prompt = self.create_prompt(post, comment)
         
@@ -159,17 +136,6 @@ Stance:"""
             return predicted_label
     
     def predict_from_csv(self, csv_path, output_path=None, batch_size=8):
-        """
-        Predict stance for all rows in a CSV file.
-        
-        Args:
-            csv_path: Path to CSV file with 'post_text' and 'comment_text' columns
-            output_path: Where to save predictions (optional)
-            batch_size: Batch size for processing
-            
-        Returns:
-            DataFrame with predictions
-        """
         print(f"\n{'='*80}")
         print("Batch Prediction from CSV")
         print(f"{'='*80}")
@@ -227,15 +193,6 @@ Stance:"""
         return results_df
     
     def evaluate(self, csv_path, batch_size=8, save_results=True, output_dir="./evaluation_results"):
-        """
-        Evaluate model on a test dataset with metrics.
-        
-        Args:
-            csv_path: Path to test CSV
-            batch_size: Batch size
-            save_results: Whether to save results
-            output_dir: Directory to save results
-        """
         print(f"\n{'='*80}")
         print("Model Evaluation")
         print(f"{'='*80}")
@@ -367,65 +324,43 @@ Stance:"""
 def main():
     parser = argparse.ArgumentParser(
         description="Qwen Stance Detection Inference with flexible model and CSV support",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Predict on CSV with trained model
-  python qwen_inference_v2.py --model-path ./results/checkpoint-1800 --csv ./data/preprocessed/reddit_preprocessed_for_qwen.csv
-
-  # Batch prediction with custom output
-  python qwen_inference_v2.py --model-path ./results/checkpoint-1800 --csv ./data/preprocessed/stance_preprocessed_for_qwen.csv --output results_predictions.csv
-
-  # Evaluate on test data
-  python qwen_inference_v2.py --model-path ./results/checkpoint-1800 --csv ./data/test.csv --eval --output-dir ./eval_results
-
-  # Single prediction
-  python qwen_inference_v2.py --model-path ./results/checkpoint-1800 --post "Your post here" --comment "Your comment here"
-        """
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    
+
     parser.add_argument(
         "--model-path",
         type=str,
-        required=True,
-        help="Path to trained model checkpoint (required)"
+        required=True
     )
     parser.add_argument(
         "--csv",
-        type=str,
-        help="Path to CSV file with 'post_text' and 'comment_text' columns for batch prediction"
+        type=str
     )
     parser.add_argument(
         "--output",
-        type=str,
-        help="Output CSV path for predictions (default: <input_csv>_predictions.csv)"
+        type=str
     )
     parser.add_argument(
         "--eval",
-        action="store_true",
-        help="Run evaluation with metrics (requires 'stance' column in CSV)"
+        action="store_true"
     )
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="./evaluation_results",
-        help="Directory to save evaluation results (default: ./evaluation_results)"
+        default="./evaluation_results"
     )
     parser.add_argument(
         "--post",
-        type=str,
-        help="Post text for single prediction"
+        type=str
     )
     parser.add_argument(
         "--comment",
-        type=str,
-        help="Comment text for single prediction"
+        type=str
     )
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=8,
-        help="Batch size for CSV processing (default: 8)"
+        default=8
     )
     
     args = parser.parse_args()
@@ -478,9 +413,6 @@ Examples:
         
         else:
             parser.print_help()
-            print("\n⚠ Please provide either:")
-            print("  --csv <path>              (for batch prediction)")
-            print("  --post <text> --comment <text>  (for single prediction)")
     
     except Exception as e:
         print(f"\n✗ Error: {e}")

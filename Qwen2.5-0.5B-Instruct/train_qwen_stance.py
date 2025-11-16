@@ -1,9 +1,3 @@
-"""
-Stance Detection Training with Qwen2.5-3B-Instruct
-Uses Optuna for hyperparameter optimization and W&B for logging
-Supports CLI arguments for flexible training on different datasets
-"""
-
 import pandas as pd
 import torch
 import numpy as np
@@ -26,81 +20,59 @@ print("=" * 80)
 print("Qwen2.5-0.5B-Instruct Stance Detection Training")
 print("=" * 80)
 
-# --- 0. Parse Command Line Arguments ---
 parser = argparse.ArgumentParser(
     description="Train Qwen2.5-0.5B-Instruct for stance detection",
-    formatter_class=argparse.RawDescriptionHelpFormatter,
-    epilog="""
-Examples:
-  # Train on Reddit data
-  python train_qwen_stance.py --csv ./data/preprocessed/reddit_preprocessed_for_qwen.csv --output ./results/reddit_model
-
-  # Train on Stance dataset
-  python train_qwen_stance.py --csv ./data/preprocessed/stance_preprocessed_for_qwen.csv --output ./results/stance_model
-
-  # Train on combined data with custom hyperparameters
-  python train_qwen_stance.py --csv ./data/preprocessed/combined_preprocessed_for_qwen.csv --epochs 5 --batch-size 16 --lr 2e-5
-    """
+    formatter_class=argparse.RawDescriptionHelpFormatter
 )
 
 parser.add_argument(
     "--csv",
     type=str,
-    default=r"D:\Quang Huy\Documents\EE6405\Project\EE6405_Final_Project\data\preprocessed\stance_dataset.csv",
-    help="Path to CSV file for training (default: combined preprocessed data)"
+    default=r"D:\Quang Huy\Documents\EE6405\Project\EE6405_Final_Project\data\preprocessed\stance_dataset.csv"
 )
 parser.add_argument(
     "--output",
     type=str,
-    default="./qwen_stance_model",
-    help="Output directory for trained model (default: ./qwen_stance_model)"
+    default="./qwen_stance_model"
 )
 parser.add_argument(
     "--epochs",
     type=int,
-    default=3,
-    help="Number of training epochs (default: 3)"
+    default=3
 )
 parser.add_argument(
     "--batch-size",
     type=int,
-    default=8,
-    help="Training batch size (default: 8)"
+    default=8
 )
 parser.add_argument(
     "--lr",
     type=float,
-    default=2e-5,
-    help="Learning rate (default: 2e-5)"
+    default=2e-5
 )
 parser.add_argument(
     "--max-rows",
     type=int,
-    default=0,
-    help="Max rows to use from CSV (0 = all, default: 0)"
+    default=0
 )
 parser.add_argument(
     "--model_name_or_path",
     type=str,
-    default="Qwen/Qwen2.5-1.5B-Instruct",
-    help="Model name or path (default: Qwen/Qwen2.5-3B-Instruct). Examples: Qwen/Qwen2.5-0.5B-Instruct, Qwen/Qwen2.5-1.5B-Instruct"
+    default="Qwen/Qwen2.5-1.5B-Instruct"
 )
 parser.add_argument(
     "--fp16",
-    action="store_true",
-    help="Enable mixed precision training (FP16) to reduce memory usage"
+    action="store_true"
 )
 
 parser.add_argument(
     "--gradient_checkpointing",
-    action="store_true",
-    help="Enable gradient checkpointing to save GPU memory at the cost of extra computation"
+    action="store_true"
 )
 
 
 args = parser.parse_args()
 
-# --- 1. Load Data with Error Handling ---
 csv_file_path = args.csv
 
 print(f"\nLoading data from: {csv_file_path}")
@@ -113,7 +85,7 @@ try:
         engine='python',
         encoding='utf-8'
     )
-    print(f"✓ Successfully loaded {len(df)} rows from {csv_file_path}")
+    print(f"Successfully loaded {len(df)} rows from {csv_file_path}")
     
     # Check if the required columns exist
     required_cols = {'post_text', 'comment_text', 'stance'}
@@ -121,7 +93,6 @@ try:
         print(f"✗ Error: CSV file must contain the columns: {required_cols}")
         print(f"  Available columns: {df.columns.tolist()}")
         
-        # Try to infer columns if there are at least 3
         if len(df.columns) >= 3:
             print(f"\n  Attempting to use first 3 columns as [post_text, comment_text, stance]")
             df.columns = ['post_text', 'comment_text', 'stance'] + list(df.columns[3:])               #For redditAITA.csv and reddit_pots_and_comments.csv
@@ -152,7 +123,6 @@ except Exception as e:
     print(f"✗ Error loading CSV: {e}")
     exit(1)
 
-# --- 2. Define Model and Tokenizer ---
 MODEL_CHECKPOINT = args.model_name_or_path
 
 print(f"\n{'='*80}")
@@ -166,12 +136,11 @@ tokenizer = AutoTokenizer.from_pretrained(
     padding_side='right'  # Important for causal LMs
 )
 
-# Set padding token if not set
+# Padding token setup
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
     print("Set pad_token to eos_token")
 
-# --- 3. Create Label Mappings ---
 labels_list = sorted(df['stance'].unique().tolist())      #For redditAITA.csv and reddit_pots_and_comments.csv
 #labels_list = sorted(df['label'].unique().tolist())       #For stance_datasets.csv
 label2id = {label: i for i, label in enumerate(labels_list)}
@@ -186,8 +155,7 @@ def preprocess_function(examples):
     """
     Format input as instruction for Qwen model.
     Uses a prompt format suitable for stance detection.
-    """
- #==========================================For redditAITA & posts and comments============================================   
+    """  
     # Create instruction-style prompts
     prompts = []
     for post, comment in zip(examples['post_text'], examples['comment_text']):
@@ -202,21 +170,7 @@ Post: {post_text}
 Comment: {comment_text}
 
 Stance:"""
-#==========================================For stance_dataset.csv===========================================================
-#        prompts = []
-#    for target, response in zip(examples['target_text'], examples['response_text']):
-        # Truncate long texts
-#        target_text = str(target)[:500] if len(str(target)) > 500 else str(target)
-#        response_text = str(response)[:300] if len(str(response)) > 300 else str(response)
-        
-#        prompt = f"""Given the following Reddit post and comment, classify the stance of the comment.
 
-#Post: {target_text}
-
-#Comment: {response_text}
-
-#Stance:"""
-#============================================================================================================================
         prompts.append(prompt)
     
     # Tokenize
@@ -257,7 +211,6 @@ eval_dataset = dataset_splits['test']
 print(f"Train dataset size: {len(train_dataset)}")
 print(f"Eval dataset size: {len(eval_dataset)}")      
 
-# --- 5. Setup Metrics ---
 accuracy_metric = evaluate.load("accuracy")
 f1_metric = evaluate.load("f1")
 
@@ -284,12 +237,11 @@ def compute_objective(metrics):
     """Objective function for Optuna - we want to maximize accuracy."""
     return metrics["eval_accuracy"]
 
-# --- 6. Setup Optuna and W&B ---
 print(f"\n{'='*80}")
 print("Setting up Optuna and Weights & Biases")
 print(f"{'='*80}")
 
-# Define persistent storage for Optuna
+# Define storage for Optuna
 storage = RDBStorage("sqlite:///optuna_qwen_trials.db")
 
 # Create or load study
@@ -300,7 +252,6 @@ study = optuna.create_study(
     load_if_exists=True
 )
 
-# --- 7. Model Initialization Function ---
 def model_init(trial=None):
     """Initialize model for each trial."""
     """Initialize model for each trial and free GPU memory."""
@@ -317,13 +268,11 @@ def model_init(trial=None):
         trust_remote_code=True
     )
     
-    # Important: Set pad_token_id for the model
     if model.config.pad_token_id is None:
         model.config.pad_token_id = tokenizer.pad_token_id
     
     return model
 
-# --- 8. Training Arguments ---
 output_dir = args.output
 Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -335,16 +284,16 @@ training_args = TrainingArguments(
     metric_for_best_model="eval_accuracy",
     logging_strategy="epoch",
     num_train_epochs=args.epochs,
-    per_device_train_batch_size=1,  # Reduce for 3B model memory
+    per_device_train_batch_size=1,  
     per_device_eval_batch_size=1,
     gradient_accumulation_steps=8,
     warmup_steps=500,
     learning_rate=args.lr,
-    fp16=True,  # Enable mixed precision training
+    fp16=True,  
     report_to=None,
     logging_dir=f"{output_dir}/logs",
     run_name="qwen2.5-0.5b-stance-detection",
-    save_total_limit=2,  # Only keep 2 best checkpoints
+    save_total_limit=2, 
     push_to_hub=False,
 )
 
@@ -356,10 +305,8 @@ print(f"  Epochs: {args.epochs}")
 print(f"  Batch Size: {args.batch_size}")
 print(f"  Learning Rate: {args.lr}")
 
-# --- 9. Data Collator ---
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-# --- 10. Initialize Trainer ---
 trainer = Trainer(
     model_init=model_init,
     args=training_args,
@@ -370,7 +317,6 @@ trainer = Trainer(
     compute_metrics=compute_metrics,
 )
 
-# --- 11. Hyperparameter Search Space ---
 def optuna_hp_space(trial):
     """Define hyperparameter search space for Optuna."""
     return {
@@ -382,7 +328,6 @@ def optuna_hp_space(trial):
         "warmup_steps": trial.suggest_int("warmup_steps", 100, 1000, step=100),
     }
 
-# --- 12. Run Hyperparameter Search ---
 print(f"\n{'='*80}")
 print("Starting Hyperparameter Search")
 print(f"{'='*80}")
@@ -408,7 +353,6 @@ except Exception as e:
     print(f"\n✗ Error during hyperparameter search: {e}")
     print("  Continuing with default hyperparameters...")
 
-# --- 13. Final Training with Best Hyperparameters ---
 print(f"\n{'='*80}")
 print("Training Final Model")
 print(f"{'='*80}")
@@ -445,7 +389,6 @@ except Exception as e:
     import traceback
     traceback.print_exc()
 
-# --- 14. Save the Final Model ---
 print(f"\n{'='*80}")
 print("Saving Model")
 print(f"{'='*80}")

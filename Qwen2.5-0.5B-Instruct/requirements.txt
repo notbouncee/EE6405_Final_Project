@@ -9,6 +9,3 @@ datasets>=2.14.0
 evaluate>=0.4.0
 optuna>=3.0.0
 wandb>=0.15.0
-
-# Only if your Python build lacks the stdlib sqlite3 module:
-# pysqlite3-binary>=0.5.3
