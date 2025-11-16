@@ -22,8 +22,6 @@ reddit_output_path = os.path.join(output_dir, "reddit_preprocessed_for_qwen.csv"
 reddit_json_path = os.path.join(output_dir, "reddit_preprocessed_for_qwen.json")
 stance_output_path = os.path.join(output_dir, "stance_preprocessed_for_qwen.csv")
 stance_json_path = os.path.join(output_dir, "stance_preprocessed_for_qwen.json")
-combined_output_path = os.path.join(output_dir, "combined_preprocessed_for_qwen.csv")
-combined_json_path = os.path.join(output_dir, "combined_preprocessed_for_qwen.json")
 
 # Ensure output directory exists
 Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -169,38 +167,6 @@ except Exception as e:
     print(f"✗ Error processing Stance data: {e}")
     stance_unified = pd.DataFrame()
 
-
-# ============================================================================
-# 3. COMBINE BOTH DATASETS
-# ============================================================================
-print("\n" + "=" * 80)
-print("Combining Both Datasets")
-print("=" * 80)
-
-try:
-    if len(reddit_unified) > 0 and len(stance_unified) > 0:
-        combined = pd.concat([reddit_unified, stance_unified], ignore_index=True)
-        
-        # Remove any duplicates across datasets
-        combined = combined.drop_duplicates(subset=['post_text', 'comment_text'])
-        
-        print(f"\n✓ Combined dataset:")
-        print(f"  Total rows: {len(combined)}")
-        print(f"  Stance distribution:\n{combined['stance'].value_counts()}")
-        print(f"  Source distribution:\n{combined['source'].value_counts()}")
-        
-        # Save combined
-        combined.to_csv(combined_output_path, index=False)
-        combined.to_json(combined_json_path, orient='records', indent=2)
-        print(f"\n✓ Saved CSV: {combined_output_path}")
-        print(f"✓ Saved JSON: {combined_json_path}")
-    else:
-        print("✗ Cannot combine: one or both datasets are empty")
-
-except Exception as e:
-    print(f"✗ Error combining datasets: {e}")
-
-
 # ============================================================================
 # SUMMARY
 # ============================================================================
@@ -212,8 +178,6 @@ print(f"  1. Reddit preprocessed CSV:    {reddit_output_path}")
 print(f"  2. Reddit preprocessed JSON:   {reddit_json_path}")
 print(f"  3. Stance preprocessed CSV:    {stance_output_path}")
 print(f"  4. Stance preprocessed JSON:   {stance_json_path}")
-print(f"  5. Combined CSV:               {combined_output_path}")
-print(f"  6. Combined JSON:              {combined_json_path}")
 print("\nAll files are ready for the Qwen model with columns:")
 print("  - post_text:  Main post/target text")
 print("  - comment_text: Response/comment text")
