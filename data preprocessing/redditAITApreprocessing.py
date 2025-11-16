@@ -7,7 +7,9 @@ from sklearn.model_selection import train_test_split
 
 
 file_path = Path(r"c:\Users\Vince\OneDrive\Desktop\Y4S1\EE6405_Final_Project\data\raw\AmItheAsshole.sqlite")
+
 preprocessed_dir = Path(r"c:\Users\Vince\OneDrive\Desktop\Y4S1\EE6405_Final_Project\data\preprocessed")
+
 preprocessed_dir.mkdir(parents=True, exist_ok=True) 
 
 # open sqlite connection
@@ -19,12 +21,15 @@ tables = pd.read_sql(query, conn)
 print("Tables:")
 print(tables)
 
+
 # Load some comments
 comments = pd.read_sql("SELECT * FROM comment LIMIT 10", conn)
+
 comments.head()
 
 # View actual column names in 'submission'
 submission_sample = pd.read_sql("SELECT * FROM submission LIMIT 1", conn)
+
 print(submission_sample.columns)
 
 # Search for all comments that contain judgment
@@ -36,7 +41,9 @@ WHERE message LIKE '%YTA%' OR message LIKE '%NTA%' OR message LIKE '%ESH%' OR me
 
 #  Extract the comment tag
 def extract_label(text):
+
     match = re.search(r"\b(YTA|NTA|ESH|INFO|NAH)\b", text)
+
     return match.group(1) if match else None
 
 judging_comments["label"] = judging_comments["message"].apply(extract_label)
@@ -45,16 +52,20 @@ judging_comments["label"] = judging_comments["message"].apply(extract_label)
 def remove_acronyms(text):
     if pd.isna(text):
         return text
+    
     # Remove the specific acronyms while keeping the rest of the text
     cleaned = re.sub(r"\b(YTA|NTA|ESH|INFO|NAH)\b", "", str(text))
+
     # Clean up any extra whitespace created by removal
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+
     return cleaned
 
 judging_comments["message"] = judging_comments["message"].apply(remove_acronyms)
 
 
 submissions = pd.read_sql("SELECT submission_id, title, selftext FROM submission", conn)
+
 
 # keep all submissions, attach any matching comment rows
 merged = pd.merge(submissions,
@@ -69,18 +80,22 @@ merged.head()
 # Drop unnecessary columns
 merged.drop(columns=["submission_id", "title", "score"], inplace=True)
 
+
 # Rename columns
 data_df = merged.rename(columns={"message": "comment", "label": "stance", "selftext": "post"})
 
 # Drop rows where 'stance' is null or only whitespace
 data_df = data_df[data_df['stance'].notna() & data_df['stance'].astype(str).str.strip().ne('')].copy()
 
+
 data_df.head()
 
 # Relabel 'label' column
 mapping = {'YTA': 'oppose', 'ESH': 'oppose', 'INFO': 'neutral', 'NAH': 'concur', 'NTA': 'concur'}
 if not set(data_df['stance'].astype(str).unique()) <= set(mapping.keys()):
+
     raise ValueError("label column has values outside {'YTA','ESH','INFO','NAH','NTA'}")
+
 data_df['stance'] = data_df['stance'].astype(str).replace(mapping)
 
 
@@ -96,5 +111,7 @@ train_df, test_df = train_test_split(
 
 # Save to CSV
 train_df.to_csv(preprocessed_dir / "redditAITA_train.csv", index=False)
+
 test_df.to_csv(preprocessed_dir / "redditAITA_test.csv", index=False)
+
 data_df.to_csv(preprocessed_dir / "redditAITA.csv", index=False)
