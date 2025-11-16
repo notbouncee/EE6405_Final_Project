@@ -23,12 +23,12 @@ from sklearn.metrics import accuracy_score, f1_score, classification_report
 from pathlib import Path
 
 print("=" * 80)
-print("Qwen2.5-3B-Instruct Stance Detection Training")
+print("Qwen2.5-0.5B-Instruct Stance Detection Training")
 print("=" * 80)
 
 # --- 0. Parse Command Line Arguments ---
 parser = argparse.ArgumentParser(
-    description="Train Qwen2.5-3B-Instruct for stance detection",
+    description="Train Qwen2.5-0.5B-Instruct for stance detection",
     formatter_class=argparse.RawDescriptionHelpFormatter,
     epilog="""
 Examples:
@@ -46,7 +46,7 @@ Examples:
 parser.add_argument(
     "--csv",
     type=str,
-    default=r"D:\Quang Huy\Documents\EE6405\Project\EE6405_Final_Project\data\preprocessed\combined_preprocessed_for_qwen.csv",
+    default=r"D:\Quang Huy\Documents\EE6405\Project\EE6405_Final_Project\data\preprocessed\stance_dataset.csv",
     help="Path to CSV file for training (default: combined preprocessed data)"
 )
 parser.add_argument(
@@ -96,11 +96,7 @@ parser.add_argument(
     action="store_true",
     help="Enable gradient checkpointing to save GPU memory at the cost of extra computation"
 )
-parser.add_argument(
-    "--use_full_data",
-    action="store_true",
-    help="Use the entire dataset as training dataset (no train-test split)"
-)
+
 
 args = parser.parse_args()
 
@@ -128,13 +124,15 @@ try:
         # Try to infer columns if there are at least 3
         if len(df.columns) >= 3:
             print(f"\n  Attempting to use first 3 columns as [post_text, comment_text, stance]")
-            df.columns = ['post_text', 'comment_text', 'stance'] + list(df.columns[3:])
+            df.columns = ['post_text', 'comment_text', 'stance'] + list(df.columns[3:])               #For redditAITA.csv and reddit_pots_and_comments.csv
+            #df.columns = ['label', 'event', 'target_text', 'response_text'] + list(df.columns[3:])   #For stance_datasets.csv
         else:
             exit(1)
     
     # Handle any missing values
     print(f"\nRows before cleaning: {len(df)}")
-    df = df.dropna(subset=['post_text', 'comment_text', 'stance'])
+    df = df.dropna(subset=['post_text', 'comment_text', 'stance'])            #For redditAITA.csv and reddit_pots_and_comments.csv
+    #df = df.dropna(subset=['target_text', 'response_text', 'label'])         #For stance_datasets.csv
     print(f"Rows after cleaning: {len(df)}")
     
     # Limit rows if specified
@@ -174,7 +172,8 @@ if tokenizer.pad_token is None:
     print("Set pad_token to eos_token")
 
 # --- 3. Create Label Mappings ---
-labels_list = sorted(df['stance'].unique().tolist())
+labels_list = sorted(df['stance'].unique().tolist())      #For redditAITA.csv and reddit_pots_and_comments.csv
+#labels_list = sorted(df['label'].unique().tolist())       #For stance_datasets.csv
 label2id = {label: i for i, label in enumerate(labels_list)}
 id2label = {i: label for i, label in enumerate(labels_list)}
 num_labels = len(labels_list)
@@ -188,6 +187,7 @@ def preprocess_function(examples):
     Format input as instruction for Qwen model.
     Uses a prompt format suitable for stance detection.
     """
+ #==========================================For redditAITA & posts and comments============================================   
     # Create instruction-style prompts
     prompts = []
     for post, comment in zip(examples['post_text'], examples['comment_text']):
@@ -202,6 +202,21 @@ Post: {post_text}
 Comment: {comment_text}
 
 Stance:"""
+#==========================================For stance_dataset.csv===========================================================
+#        prompts = []
+#    for target, response in zip(examples['target_text'], examples['response_text']):
+        # Truncate long texts
+#        target_text = str(target)[:500] if len(str(target)) > 500 else str(target)
+#        response_text = str(response)[:300] if len(str(response)) > 300 else str(response)
+        
+#        prompt = f"""Given the following Reddit post and comment, classify the stance of the comment.
+
+#Post: {target_text}
+
+#Comment: {response_text}
+
+#Stance:"""
+#============================================================================================================================
         prompts.append(prompt)
     
     # Tokenize
@@ -235,17 +250,12 @@ tokenized_dataset = dataset.map(
 )
 
 # Split into train/eval
-if args.use_full_data:
-    print("\nUsing the entire dataset as training (no evaluation split)")
-    train_dataset = tokenized_dataset
-    eval_dataset = None  # Trainer will skip evaluation
-else:
-    dataset_splits = tokenized_dataset.train_test_split(test_size=0.2, seed=42)
-    train_dataset = dataset_splits['train']
-    eval_dataset = dataset_splits['test']
+dataset_splits = tokenized_dataset.train_test_split(test_size=0.2, seed=42)
+train_dataset = dataset_splits['train']
+eval_dataset = dataset_splits['test']
 
 print(f"Train dataset size: {len(train_dataset)}")
-#print(f"Eval dataset size: {len(eval_dataset)}")
+print(f"Eval dataset size: {len(eval_dataset)}")      
 
 # --- 5. Setup Metrics ---
 accuracy_metric = evaluate.load("accuracy")
@@ -333,7 +343,7 @@ training_args = TrainingArguments(
     fp16=True,  # Enable mixed precision training
     report_to=None,
     logging_dir=f"{output_dir}/logs",
-    run_name="qwen2.5-3b-stance-detection",
+    run_name="qwen2.5-0.5b-stance-detection",
     save_total_limit=2,  # Only keep 2 best checkpoints
     push_to_hub=False,
 )
@@ -354,7 +364,7 @@ trainer = Trainer(
     model_init=model_init,
     args=training_args,
     train_dataset=train_dataset,
-    eval_dataset=eval_dataset if not args.use_full_data else None,
+    eval_dataset=eval_dataset,
     tokenizer=tokenizer,
     data_collator=data_collator,
     compute_metrics=compute_metrics,
