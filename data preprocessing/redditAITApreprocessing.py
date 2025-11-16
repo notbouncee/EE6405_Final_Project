@@ -6,13 +6,12 @@ from pathlib import Path
 from sklearn.model_selection import train_test_split
 
 
-ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "data" / "raw" / "AmItheAsshole.sqlite"
-PREPROCESSED_DIR = ROOT / "data" / "preprocessed"
-PREPROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+file_path = Path(r"c:\Users\Vince\OneDrive\Desktop\Y4S1\EE6405_Final_Project\data\raw\AmItheAsshole.sqlite")
+preprocessed_dir = Path(r"c:\Users\Vince\OneDrive\Desktop\Y4S1\EE6405_Final_Project\data\preprocessed")
+preprocessed_dir.mkdir(parents=True, exist_ok=True) 
 
 # open sqlite connection
-conn = sqlite3.connect(str(DB_PATH))
+conn = sqlite3.connect(str(file_path))
 
 # Show tables
 query = "SELECT name FROM sqlite_master WHERE type='table';"
@@ -96,6 +95,6 @@ train_df, test_df = train_test_split(
 
 
 # Save to CSV
-train_df.to_csv(PREPROCESSED_DIR / "redditAITA_train.csv", index=False)
-test_df.to_csv(PREPROCESSED_DIR / "redditAITA_test.csv", index=False)
-data_df.to_csv(PREPROCESSED_DIR / "redditAITA.csv", index=False)
+train_df.to_csv(preprocessed_dir / "redditAITA_train.csv", index=False)
+test_df.to_csv(preprocessed_dir / "redditAITA_test.csv", index=False)
+data_df.to_csv(preprocessed_dir / "redditAITA.csv", index=False)

@@ -4,14 +4,13 @@ from pathlib import Path
 from sklearn.model_selection import train_test_split
 
 
-ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = ROOT / "data" / "raw" / "stance_dataset.json"
-PREPROCESSED_DIR = ROOT / "data" / "preprocessed"
-PREPROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+file_path = Path(r"c:\Users\Vince\OneDrive\Desktop\Y4S1\EE6405_Final_Project\data\raw\stance_dataset.json")
+preprocessed_dir = Path(r"c:\Users\Vince\OneDrive\Desktop\Y4S1\EE6405_Final_Project\data\preprocessed")
+preprocessed_dir.mkdir(parents=True, exist_ok=True)
 
 
 # 1) Read the JSONL file into DataFrame
-data_df = pd.read_json(DB_PATH, lines=True)
+data_df = pd.read_json(file_path, lines=True)
 
 # 2) Parse any *_created_at columns as datetimes
 date_cols = [c for c in data_df.columns if c.lower().endswith("created_at")]
@@ -75,6 +74,6 @@ train_df, test_df = train_test_split(
 
 #4 Save to CSV
 
-train_df.to_csv(PREPROCESSED_DIR / "stance_dataset_train.csv", index=False)
-test_df.to_csv(PREPROCESSED_DIR / "stance_dataset_test.csv", index=False)
-data_df.to_csv(PREPROCESSED_DIR / "stance_dataset.csv", index=False)
+train_df.to_csv(preprocessed_dir / "stance_dataset_train.csv", index=False)
+test_df.to_csv(preprocessed_dir / "stance_dataset_test.csv", index=False)
+data_df.to_csv(preprocessed_dir / "stance_dataset.csv", index=False)
